@@ -11,14 +11,20 @@ if (!(Test-Path -LiteralPath $venv)) {
 
 dotnet build (Join-Path $root 'src\LimbusCanvasFix\LimbusCanvasFix.csproj') -c Release -p:SkipDeploy=true
 dotnet build (Join-Path $root 'src\LimbusWindowResizeFix\LimbusWindowResizeFix.csproj') -c Release -p:SkipDeploy=true
+dotnet build (Join-Path $root 'tools\patch-libcpp\patch-libcpp.csproj') -c Release
 & (Join-Path $PSScriptRoot 'prepare_release_payload.ps1') -RepoRoot $root
 
 $sep = ';'
+$buildPath = Join-Path $PSScriptRoot 'build'
+$distPath = Join-Path $PSScriptRoot 'dist'
 & (Join-Path $venv 'Scripts\pyinstaller.exe') `
     --noconfirm `
     --clean `
     --windowed `
     --name "Limbus Multi-tool" `
+    --workpath $buildPath `
+    --distpath $distPath `
+    --specpath $PSScriptRoot `
     --add-data "$(Join-Path $PSScriptRoot 'backend.ps1')${sep}." `
     --add-data "$(Join-Path $PSScriptRoot 'payload')${sep}payload" `
     --add-data "$(Join-Path $PSScriptRoot 'assets')${sep}assets" `

@@ -8,6 +8,9 @@ artifacts/
 # Python and PyInstaller outputs
 __pycache__/
 *.py[cod]
+build/
+dist/
+*.spec
 limbus-multitool/.venv/
 limbus-multitool/build/
 limbus-multitool/dist/
