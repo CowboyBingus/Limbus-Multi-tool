@@ -2,6 +2,16 @@
 
 Source for two BepInEx IL2CPP plugins and a Qt installer for Limbus Company.
 
+**AI Usage Disclaimer**: This tool and its associated patches were built for myself using Codex GPT 5.5 High with intent for personal use only. I've decided to share this tool and its source code with the public due to the recent major Unity 6 engine upgrade causing a lot of breaking changes, but make no guarantees regarding their efficacy.
+
+**Game Usage Disclaimer**: While I have not been penalized or banned regarding my use of this tool for several weeks, please understand there is no guarantee that Project Moon will not crack down on this tool, and others, at any time. By using this tool, you are also agreeing to the understanding that *your account could be permanently banned*, so please use this with discretion.
+
+**Regarding Project Moon**: This tool is in no way associated with, or endorsed by, Project Moon or any related entities. It provides no gameplay advantages and its sole purpose is to provide accessibility for players. This tool will always be free of charge, and I will not accept money or other gifts in any form for it or work related to it. If Project Moon, or one of its legally authorized representatives, feels this project should still be shut down regardless of the previous statements, then the project will be removed as soon as reasonably possible.
+
+# Attribution
+
+The Lethe team's source code was referenced as a starting point for patching the game. None of their team was involved in the initial production of this tool. This tool has essentially changed completely in its approach to patching the game since then. If there are any areas where the Lethe team feels their code has still been re-used, and would like it removed, please reach out and I'll do my best to replace it in a timely manner.
+
 ## Layout
 
 - `src/LimbusCanvasFix/` - ultrawide UI canvas fix plugin.
