@@ -1,6 +1,6 @@
 param(
     [string]$GameDir = "C:\Program Files (x86)\Steam\steamapps\common\Limbus Company",
-    [string]$RepoDir = $PSScriptRoot,
+    [string]$RepoDir = (Split-Path -Parent $PSScriptRoot),
     [switch]$SkipBuild,
     [switch]$SkipCorePatch
 )
@@ -114,11 +114,6 @@ function Patch-BepInExUnityRuntimeInvoke([string]$Path, [hashtable]$Map) {
         Copy-Item -LiteralPath $Path -Destination $bak
     }
 
-    $knownOld = @(
-        "il2cpp_runtime_invoke",
-        "lTmZdywLyKK",
-        "JVXXuBsufpK"
-    )
     $target = [string]$Map["il2cpp_runtime_invoke"]
 
     $ad = [Mono.Cecil.AssemblyDefinition]::ReadAssembly($Path, (New-CecilReaderParams $Path))
@@ -126,9 +121,19 @@ function Patch-BepInExUnityRuntimeInvoke([string]$Path, [hashtable]$Map) {
     foreach ($type in $ad.MainModule.Types) {
         foreach ($method in $type.Methods) {
             if (!$method.HasBody) { continue }
+            $isRuntimeInvokeLookup = $type.FullName -eq "BepInEx.Unity.IL2CPP.IL2CPPChainloader" -and
+                $method.Name -eq "Initialize" -and
+                ($method.Body.Instructions | Where-Object {
+                    $_.OpCode.Code -eq [Mono.Cecil.Cil.Code]::Ldstr -and
+                    [string]$_.Operand -eq "Runtime invoke pointer: 0x"
+                })
+            if (!$isRuntimeInvokeLookup) { continue }
+
             foreach ($instruction in $method.Body.Instructions) {
-                if ($instruction.OpCode.Code -eq [Mono.Cecil.Cil.Code]::Ldstr -and
-                    $knownOld -contains [string]$instruction.Operand) {
+                if ($instruction.OpCode.Code -ne [Mono.Cecil.Cil.Code]::Ldstr) { continue }
+                $operand = [string]$instruction.Operand
+                if ($operand -eq "il2cpp_runtime_invoke" -or
+                    $operand -match '^[A-Za-z_][A-Za-z0-9_]{10}$') {
                     $instruction.Operand = $target
                     $changed++
                 }
