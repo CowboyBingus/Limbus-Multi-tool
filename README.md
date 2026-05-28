@@ -1,0 +1,44 @@
+# Limbus Ultrawide and Window Resize Fixes
+
+Source for two BepInEx IL2CPP plugins and a Qt installer for Limbus Company.
+
+## Layout
+
+- `src/LimbusCanvasFix/` - ultrawide UI canvas fix plugin.
+- `src/LimbusWindowResizeFix/` - window resizing plugin.
+- `tools/patch-libcpp/` - compatibility patcher for BepInEx IL2CPP tooling.
+- `tools/test-stock-cpp2il/` - local diagnostic harness for Cpp2IL behavior.
+- `limbus-multitool/` - PySide6/Qt installer app for end users.
+- `scripts/` - local repair and symbol-map rebuild scripts.
+- `data/` - IL2CPP API name list used by the resource rebuild workflow.
+
+## Build
+
+From the repository root:
+
+```powershell
+dotnet build .\src\LimbusCanvasFix\LimbusCanvasFix.csproj -c Release -p:SkipDeploy=true
+dotnet build .\src\LimbusWindowResizeFix\LimbusWindowResizeFix.csproj -c Release -p:SkipDeploy=true
+dotnet build .\tools\patch-libcpp\patch-libcpp.csproj -c Release
+```
+
+To build the end-user installer:
+
+```powershell
+.\limbus-multitool\build_exe.ps1
+```
+
+The distributable app is written to `limbus-multitool\dist\Limbus Multi-tool`. The release build output, generated payload, local BepInEx/runtime copies, and compiled artifacts are intentionally ignored by Git.
+
+## Release
+
+GitHub does not build or attach the executable just because the repository is pushed. Build the Windows release package locally, then attach it to a GitHub Release:
+
+```powershell
+.\scripts\build-release.ps1 -Version 1.0.0
+.\scripts\publish-release.ps1 -Version 1.0.0 -Draft
+```
+
+The first command writes `artifacts\Limbus-Multi-tool-1.0.0-win-x64.zip`. The second command requires the GitHub CLI (`gh`) and creates/pushes tag `v1.0.0`, then uploads the zip as a release asset.
+
+The release is built locally because the plugin projects compile against BepInEx and generated IL2CPP interop assemblies from an installed game. A plain GitHub-hosted runner does not have those game-derived reference assemblies.

@@ -1,0 +1,27 @@
+$ErrorActionPreference = 'Stop'
+$root = Split-Path -Parent $PSScriptRoot
+$venv = Join-Path $PSScriptRoot '.venv'
+
+if (!(Test-Path -LiteralPath $venv)) {
+    py -3.10 -m venv $venv
+}
+
+& (Join-Path $venv 'Scripts\python.exe') -m pip install --upgrade pip
+& (Join-Path $venv 'Scripts\pip.exe') install -r (Join-Path $PSScriptRoot 'requirements.txt')
+
+dotnet build (Join-Path $root 'src\LimbusCanvasFix\LimbusCanvasFix.csproj') -c Release -p:SkipDeploy=true
+dotnet build (Join-Path $root 'src\LimbusWindowResizeFix\LimbusWindowResizeFix.csproj') -c Release -p:SkipDeploy=true
+& (Join-Path $PSScriptRoot 'prepare_release_payload.ps1') -RepoRoot $root
+
+$sep = ';'
+& (Join-Path $venv 'Scripts\pyinstaller.exe') `
+    --noconfirm `
+    --clean `
+    --windowed `
+    --name "Limbus Multi-tool" `
+    --add-data "$(Join-Path $PSScriptRoot 'backend.ps1')${sep}." `
+    --add-data "$(Join-Path $PSScriptRoot 'payload')${sep}payload" `
+    --add-data "$(Join-Path $PSScriptRoot 'assets')${sep}assets" `
+    (Join-Path $PSScriptRoot 'limbus_installer.py')
+
+Write-Host "Built installer at: $(Join-Path $PSScriptRoot 'dist\Limbus Multi-tool')"
