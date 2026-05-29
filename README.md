@@ -1,6 +1,6 @@
 # Limbus Ultrawide and Window Resize Fixes
 
-Source for two BepInEx IL2CPP plugins and a Qt installer for Limbus Company.
+Source for three BepInEx IL2CPP plugins and a Qt installer for Limbus Company.
 
 **AI Usage Disclaimer**: This tool and its associated patches were built for myself using Codex GPT 5.5 High with intent for personal use only. I've decided to share this tool and its source code with the public due to the recent major Unity 6 engine upgrade causing a lot of breaking changes, but make no guarantees regarding their efficacy.
 
@@ -16,6 +16,7 @@ The Lethe team's source code was referenced as a starting point for patching the
 
 - `src/LimbusCanvasFix/` - ultrawide UI canvas fix plugin.
 - `src/LimbusWindowResizeFix/` - window resizing plugin.
+- `src/LimbusFramePacingFix/` - 240 FPS cap and maximized-window frame pacing plugin.
 - `tools/patch-libcpp/` - compatibility patcher for BepInEx IL2CPP tooling.
 - `tools/test-stock-cpp2il/` - local diagnostic harness for Cpp2IL behavior.
 - `limbus-multitool/` - PySide6/Qt installer app for end users.
@@ -29,6 +30,7 @@ From the repository root:
 ```powershell
 dotnet build .\src\LimbusCanvasFix\LimbusCanvasFix.csproj -c Release -p:SkipDeploy=true
 dotnet build .\src\LimbusWindowResizeFix\LimbusWindowResizeFix.csproj -c Release -p:SkipDeploy=true
+dotnet build .\src\LimbusFramePacingFix\LimbusFramePacingFix.csproj -c Release -p:SkipDeploy=true
 dotnet build .\tools\patch-libcpp\patch-libcpp.csproj -c Release
 ```
 

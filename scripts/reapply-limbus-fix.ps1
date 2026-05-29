@@ -403,6 +403,9 @@ if (!$SkipBuild) {
 
     Info "Building LimbusWindowResizeFix"
     dotnet build (Join-Path $RepoDir "src\LimbusWindowResizeFix\LimbusWindowResizeFix.csproj") -c Release /p:SkipDeploy=true
+
+    Info "Building LimbusFramePacingFix"
+    dotnet build (Join-Path $RepoDir "src\LimbusFramePacingFix\LimbusFramePacingFix.csproj") -c Release /p:SkipDeploy=true
 }
 
 if (!$SkipCorePatch) {
@@ -445,6 +448,13 @@ $resizePluginDll = Resolve-FirstExistingPath @(
 ) "LimbusWindowResizeFix.dll"
 Info "Deploying LimbusWindowResizeFix.dll"
 Copy-Item -LiteralPath $resizePluginDll -Destination (Join-Path $pluginsDir "LimbusWindowResizeFix.dll") -Force
+
+$framePacingPluginDll = Resolve-FirstExistingPath @(
+    (Join-Path $RepoDir "src\LimbusFramePacingFix\bin\Release\LimbusFramePacingFix.dll"),
+    (Join-Path $RepoDir "bin\Release\LimbusFramePacingFix.dll")
+) "LimbusFramePacingFix.dll"
+Info "Deploying LimbusFramePacingFix.dll"
+Copy-Item -LiteralPath $framePacingPluginDll -Destination (Join-Path $pluginsDir "LimbusFramePacingFix.dll") -Force
 
 if (Test-Path -LiteralPath $interopDir) {
     Info "Reducing interop folder to known working load set"

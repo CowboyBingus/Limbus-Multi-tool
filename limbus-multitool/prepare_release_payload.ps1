@@ -20,6 +20,7 @@ Copy-Item -LiteralPath (Join-Path $RepoRoot 'data\il2cpp-api-functions-unity6000
 
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'src\LimbusCanvasFix\bin\Release\LimbusCanvasFix.dll') -Destination (Join-Path $payload 'bin\Release') -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'src\LimbusWindowResizeFix\bin\Release\LimbusWindowResizeFix.dll') -Destination (Join-Path $payload 'bin\Release') -Force
+Copy-Item -LiteralPath (Join-Path $RepoRoot 'src\LimbusFramePacingFix\bin\Release\LimbusFramePacingFix.dll') -Destination (Join-Path $payload 'bin\Release') -Force
 
 $patcherDir = Join-Path $RepoRoot 'tools\patch-libcpp\bin\Release\net6.0'
 Copy-Item -Path (Join-Path $patcherDir '*') -Destination (Join-Path $payload 'tools\patch-libcpp\bin\Release\net6.0') -Force

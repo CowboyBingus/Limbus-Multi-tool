@@ -1,6 +1,6 @@
 # Limbus Multi-tool
 
-Qt-based installer for the Limbus ultrawide and window-resize plugins. It can install the official BepInEx Unity IL2CPP Windows x64 build when BepInEx is not already present.
+Qt-based installer for the Limbus ultrawide, window-resize, and FPS/frame-pacing plugins. It can install the official BepInEx Unity IL2CPP Windows x64 build when BepInEx is not already present.
 
 ## Developer usage
 
@@ -9,6 +9,7 @@ From the repository root:
 ```powershell
 dotnet build .\src\LimbusCanvasFix\LimbusCanvasFix.csproj -c Release -p:SkipDeploy=true
 dotnet build .\src\LimbusWindowResizeFix\LimbusWindowResizeFix.csproj -c Release -p:SkipDeploy=true
+dotnet build .\src\LimbusFramePacingFix\LimbusFramePacingFix.csproj -c Release -p:SkipDeploy=true
 .\limbus-multitool\prepare_release_payload.ps1
 py -3.10 -m venv .\limbus-multitool\.venv
 .\limbus-multitool\.venv\Scripts\pip install -r .\limbus-multitool\requirements.txt
@@ -34,5 +35,6 @@ Expected verification markers:
 
 - `Applied CanvasScaler ultrawide fix`
 - `Enabled resizing for HWND`
+- `Frame pacing apply`
 
 The installer redistributes only this project's plugin DLLs, patch tooling, and scripts. It derives game-specific IL2CPP symbols from the user's local `UnityPlayer.dll` and `GameAssembly.dll`.

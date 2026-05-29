@@ -11,6 +11,7 @@ if (!(Test-Path -LiteralPath $venv)) {
 
 dotnet build (Join-Path $root 'src\LimbusCanvasFix\LimbusCanvasFix.csproj') -c Release -p:SkipDeploy=true
 dotnet build (Join-Path $root 'src\LimbusWindowResizeFix\LimbusWindowResizeFix.csproj') -c Release -p:SkipDeploy=true
+dotnet build (Join-Path $root 'src\LimbusFramePacingFix\LimbusFramePacingFix.csproj') -c Release -p:SkipDeploy=true
 dotnet build (Join-Path $root 'tools\patch-libcpp\patch-libcpp.csproj') -c Release
 & (Join-Path $PSScriptRoot 'prepare_release_payload.ps1') -RepoRoot $root
 

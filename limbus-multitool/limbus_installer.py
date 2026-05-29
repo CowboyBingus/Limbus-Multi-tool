@@ -255,13 +255,18 @@ class MainWindow(QMainWindow):
         self.canvas_check.setToolTip("Fixes CanvasScaler behavior for ultrawide displays.")
         self.resize_check = QCheckBox("Window resize fix")
         self.resize_check.setToolTip("Restores the resizable window border after the Unity engine upgrade.")
+        self.framepacing_check = QCheckBox("FPS / frame pacing fix")
+        self.framepacing_check.setToolTip("Forces a 240 FPS cap, disables Unity v-sync, and keeps maximized window mode.")
         self.canvas_check.setChecked(setting_bool(self.settings, "pluginCanvas", True))
         self.resize_check.setChecked(setting_bool(self.settings, "pluginResize", True))
+        self.framepacing_check.setChecked(setting_bool(self.settings, "pluginFramePacing", True))
         self.canvas_check.stateChanged.connect(self.save_plugin_selection)
         self.resize_check.stateChanged.connect(self.save_plugin_selection)
+        self.framepacing_check.stateChanged.connect(self.save_plugin_selection)
         plugin_layout.addWidget(plugin_title)
         plugin_layout.addWidget(self.canvas_check)
         plugin_layout.addWidget(self.resize_check)
+        plugin_layout.addWidget(self.framepacing_check)
         layout.addWidget(plugin_box)
 
         button_row = QHBoxLayout()
@@ -316,11 +321,14 @@ class MainWindow(QMainWindow):
             selected.append("canvas")
         if self.resize_check.isChecked():
             selected.append("resize")
+        if self.framepacing_check.isChecked():
+            selected.append("framepacing")
         return selected
 
     def save_plugin_selection(self) -> None:
         self.settings.setValue("pluginCanvas", self.canvas_check.isChecked())
         self.settings.setValue("pluginResize", self.resize_check.isChecked())
+        self.settings.setValue("pluginFramePacing", self.framepacing_check.isChecked())
 
     def refresh_status(self) -> None:
         game_dir = self.selected_game_dir()
@@ -345,17 +353,22 @@ class MainWindow(QMainWindow):
             and (payload / "data" / "il2cpp-api-functions-unity6000-no-profiler.txt").exists()
             and (payload / "bin" / "Release" / "LimbusCanvasFix.dll").exists()
             and (payload / "bin" / "Release" / "LimbusWindowResizeFix.dll").exists()
+            and (payload / "bin" / "Release" / "LimbusFramePacingFix.dll").exists()
         )
         self.payload_card.set_value("Ready" if payload_ok else f"Incomplete: {payload}", payload_ok)
 
         if game_dir:
             plugin_dir = game_dir / "BepInEx" / "plugins"
-            canvas = plugin_dir / "LimbusCanvasFix.dll"
-            resize = plugin_dir / "LimbusWindowResizeFix.dll"
-            if canvas.exists() and resize.exists():
-                self.plugin_card.set_value("Both plugins installed", True)
-            elif canvas.exists() or resize.exists():
-                self.plugin_card.set_value("Only one plugin installed", False)
+            installed = [
+                (plugin_dir / "LimbusCanvasFix.dll").exists(),
+                (plugin_dir / "LimbusWindowResizeFix.dll").exists(),
+                (plugin_dir / "LimbusFramePacingFix.dll").exists(),
+            ]
+            installed_count = sum(1 for present in installed if present)
+            if installed_count == len(installed):
+                self.plugin_card.set_value("All plugins installed", True)
+            elif installed_count:
+                self.plugin_card.set_value(f"{installed_count} of {len(installed)} plugins installed", False)
             else:
                 self.plugin_card.set_value("Plugins not installed", None)
         else:
@@ -387,7 +400,7 @@ class MainWindow(QMainWindow):
     def set_busy(self, busy: bool) -> None:
         self.progress.setRange(0, 0 if busy else 1)
         self.progress.setValue(0 if busy else 1)
-        for button in (self.install_btn, self.launch_btn, self.canvas_check, self.resize_check):
+        for button in (self.install_btn, self.launch_btn, self.canvas_check, self.resize_check, self.framepacing_check):
             button.setEnabled(not busy)
 
     def append_line(self, text: str) -> None:

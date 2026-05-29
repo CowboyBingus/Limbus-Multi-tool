@@ -5,7 +5,7 @@ param(
 
     [string]$GameDir,
     [string]$PayloadRoot = (Join-Path $PSScriptRoot 'payload'),
-    [string]$Plugins = 'canvas,resize'
+    [string]$Plugins = 'canvas,resize,framepacing'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -123,7 +123,7 @@ function Get-SelectedPlugins {
     foreach ($raw in ($Plugins -split ',')) {
         $name = $raw.Trim().ToLowerInvariant()
         if ([string]::IsNullOrWhiteSpace($name)) { continue }
-        if ($name -notin @('canvas','resize')) {
+        if ($name -notin @('canvas','resize','framepacing')) {
             Fail "Unknown plugin selection: $name"
         }
         if ($name -notin $selected) {
@@ -141,9 +141,10 @@ function Sync-SelectedPlugins([string[]]$Selected) {
     $pluginMap = @{
         canvas = 'LimbusCanvasFix.dll'
         resize = 'LimbusWindowResizeFix.dll'
+        framepacing = 'LimbusFramePacingFix.dll'
     }
 
-    foreach ($key in @('canvas','resize')) {
+    foreach ($key in @('canvas','resize','framepacing')) {
         $dllName = $pluginMap[$key]
         $path = Join-Path $pluginDir $dllName
         if ($Selected -contains $key) {
@@ -162,6 +163,7 @@ function Invoke-Install {
     Require-File (Join-Path $PayloadRoot 'data\il2cpp-api-functions-unity6000-no-profiler.txt') 'bundled IL2CPP API list'
     Require-File (Join-Path $PayloadRoot 'bin\Release\LimbusCanvasFix.dll') 'LimbusCanvasFix payload'
     Require-File (Join-Path $PayloadRoot 'bin\Release\LimbusWindowResizeFix.dll') 'LimbusWindowResizeFix payload'
+    Require-File (Join-Path $PayloadRoot 'bin\Release\LimbusFramePacingFix.dll') 'LimbusFramePacingFix payload'
 
     $selected = Get-SelectedPlugins
     Ensure-BepInEx
@@ -181,6 +183,7 @@ function Invoke-Verify {
     $pluginDir = Get-PluginDir $GameDir
     Require-File (Join-Path $pluginDir 'LimbusCanvasFix.dll') 'LimbusCanvasFix plugin'
     Require-File (Join-Path $pluginDir 'LimbusWindowResizeFix.dll') 'LimbusWindowResizeFix plugin'
+    Require-File (Join-Path $pluginDir 'LimbusFramePacingFix.dll') 'LimbusFramePacingFix plugin'
 
     $logPath = Join-Path $GameDir 'BepInEx\LogOutput.log'
     Require-File $logPath 'BepInEx log'
@@ -198,6 +201,12 @@ function Invoke-Verify {
         Warn "Window resize marker not found yet. Launch the game and wait for the window to appear."
     }
 
+    if ($log -match 'Frame pacing apply') {
+        Info "FPS/frame pacing fix verified in log."
+    } else {
+        Warn "FPS/frame pacing marker not found yet. Launch the game and wait for scene loading to complete."
+    }
+
     $errors = Join-Path $GameDir 'BepInEx\ErrorLog.log'
     if ((Test-Path -LiteralPath $errors) -and (Get-Item -LiteralPath $errors).Length -gt 0) {
         Warn "BepInEx ErrorLog.log is not empty. Inspect it if the game did not start correctly."
@@ -208,7 +217,7 @@ function Invoke-Uninstall {
     Require-GameDir $GameDir
     Stop-GameIfRunning
     $pluginDir = Get-PluginDir $GameDir
-    foreach ($name in @('LimbusCanvasFix.dll','LimbusWindowResizeFix.dll')) {
+    foreach ($name in @('LimbusCanvasFix.dll','LimbusWindowResizeFix.dll','LimbusFramePacingFix.dll')) {
         $path = Join-Path $pluginDir $name
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Force
