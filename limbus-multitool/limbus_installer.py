@@ -41,6 +41,33 @@ DEFAULT_VERSION = "0.0.0-dev"
 RELEASES_URL = "https://github.com/CowboyBingus/Limbus-Multi-tool/releases"
 LATEST_RELEASE_API = "https://api.github.com/repos/CowboyBingus/Limbus-Multi-tool/releases/latest"
 UPDATE_ASSET_PATTERN = re.compile(r"^Limbus-Multi-tool-.+-win-x64\.zip$", re.IGNORECASE)
+REQUIRED_BEPINEX_FILES = (
+    ("BepInEx", "core", "BepInEx.Core.dll"),
+    ("BepInEx", "core", "BepInEx.Unity.IL2CPP.dll"),
+    ("BepInEx", "core", "Il2CppInterop.Runtime.dll"),
+    ("BepInEx", "core", "LibCpp2IL.dll"),
+    ("BepInEx", "core", "Cpp2IL.Core.dll"),
+    ("BepInEx", "core", "Il2CppInterop.Generator.dll"),
+    ("BepInEx", "core", "Mono.Cecil.dll"),
+    ("BepInEx", "core", "Mono.Cecil.Rocks.dll"),
+    ("doorstop_config.ini",),
+    ("winhttp.dll",),
+)
+REQUIRED_PAYLOAD_FILES = (
+    ("scripts", "reapply-limbus-fix.ps1"),
+    ("scripts", "rebuild-resources.ps1"),
+    ("data", "il2cpp-api-functions-unity6000-no-profiler.txt"),
+    ("data", "System.JsonExtensions.dll-resources.dat.template"),
+    ("bin", "Release", "LimbusCanvasFix.dll"),
+    ("bin", "Release", "LimbusWindowResizeFix.dll"),
+    ("bin", "Release", "LimbusFramePacingFix.dll"),
+    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.exe"),
+    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.dll"),
+    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.runtimeconfig.json"),
+    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.deps.json"),
+    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "Mono.Cecil.dll"),
+    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "Mono.Cecil.Rocks.dll"),
+)
 
 
 def app_root() -> Path:
@@ -447,23 +474,22 @@ class MainWindow(QMainWindow):
             self.game_card.set_value("Select the folder containing LimbusCompany.exe", False)
 
         game_ok = game_dir is not None and is_game_dir(str(game_dir))
-        if game_ok and (game_dir / "BepInEx" / "core" / "BepInEx.Unity.IL2CPP.dll").exists():
+        bepinex_missing = []
+        if game_ok:
+            bepinex_missing = [Path(*parts) for parts in REQUIRED_BEPINEX_FILES if not (game_dir / Path(*parts)).exists()]
+
+        if game_ok and not bepinex_missing:
             self.bepin_card.set_value("BepInEx Unity IL2CPP present", True)
         elif game_ok:
-            self.bepin_card.set_value("Will be downloaded during install", None)
+            self.bepin_card.set_value("Incomplete; will be repaired during install", None)
         else:
             self.bepin_card.set_value("Select a game folder", None)
 
         payload = payload_root()
-        payload_ok = (
-            (payload / "scripts" / "reapply-limbus-fix.ps1").exists()
-            and (payload / "scripts" / "rebuild-resources.ps1").exists()
-            and (payload / "data" / "il2cpp-api-functions-unity6000-no-profiler.txt").exists()
-            and (payload / "bin" / "Release" / "LimbusCanvasFix.dll").exists()
-            and (payload / "bin" / "Release" / "LimbusWindowResizeFix.dll").exists()
-            and (payload / "bin" / "Release" / "LimbusFramePacingFix.dll").exists()
-        )
-        self.payload_card.set_value("Ready" if payload_ok else f"Incomplete: {payload}", payload_ok)
+        missing_payload = [Path(*parts) for parts in REQUIRED_PAYLOAD_FILES if not (payload / Path(*parts)).exists()]
+        payload_ok = not missing_payload
+        payload_text = "Ready" if payload_ok else f"Missing {len(missing_payload)} file(s): {missing_payload[0]}"
+        self.payload_card.set_value(payload_text, payload_ok)
 
         if game_dir:
             plugin_dir = game_dir / "BepInEx" / "plugins"

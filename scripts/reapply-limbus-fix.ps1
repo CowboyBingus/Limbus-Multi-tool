@@ -26,22 +26,65 @@ function Resolve-FirstExistingPath([string[]]$Paths, [string]$Description) {
     throw "$Description not found. Checked: $($Paths -join ', ')"
 }
 
-function Set-ConfigValue([string]$ConfigPath, [string]$Name, [string]$Value) {
-    Require-File $ConfigPath
-    $lines = Get-Content -LiteralPath $ConfigPath
+function Set-ConfigValue([string]$ConfigPath, [string]$Section, [string]$Name, [string]$Value) {
+    $configDir = Split-Path -Parent $ConfigPath
+    if (!(Test-Path -LiteralPath $configDir)) {
+        New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    }
+
+    if (Test-Path -LiteralPath $ConfigPath) {
+        $lines = @(Get-Content -LiteralPath $ConfigPath)
+    } else {
+        Info "BepInEx config not found; creating $ConfigPath"
+        $lines = @()
+    }
+
     $pattern = "^\s*$([regex]::Escape($Name))\s*=.*$"
+    $sectionPattern = "^\s*\[$([regex]::Escape($Section))\]\s*$"
+    $anySectionPattern = "^\s*\[[^\]]+\]\s*$"
     $updated = $false
-    $lines = $lines | ForEach-Object {
-        if ($_ -match $pattern) {
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match $pattern) {
             $updated = $true
-            "$Name = $Value"
-        } else {
-            $_
+            $lines[$i] = "$Name = $Value"
         }
     }
+
     if (!$updated) {
-        throw "Config key not found in ${ConfigPath}: $Name"
+        $sectionIndex = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match $sectionPattern) {
+                $sectionIndex = $i
+                break
+            }
+        }
+
+        if ($sectionIndex -lt 0) {
+            if ($lines.Count -gt 0 -and ![string]::IsNullOrWhiteSpace($lines[-1])) {
+                $lines += ""
+            }
+            $lines += "[$Section]"
+            $lines += "$Name = $Value"
+        } else {
+            $insertIndex = $lines.Count
+            for ($i = $sectionIndex + 1; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match $anySectionPattern) {
+                    $insertIndex = $i
+                    break
+                }
+            }
+            $before = @()
+            $after = @()
+            if ($insertIndex -gt 0) {
+                $before = @($lines[0..($insertIndex - 1)])
+            }
+            if ($insertIndex -lt $lines.Count) {
+                $after = @($lines[$insertIndex..($lines.Count - 1)])
+            }
+            $lines = @($before + "$Name = $Value" + $after)
+        }
     }
+
     Set-Content -LiteralPath $ConfigPath -Value $lines
 }
 
@@ -427,10 +470,10 @@ Patch-Il2CppRuntimeSymbols (Join-Path $coreDir "Il2CppInterop.Runtime.dll") $il2
 Patch-BepInExUnityRuntimeInvoke (Join-Path $coreDir "BepInEx.Unity.IL2CPP.dll") $il2cppMap
 
 Info "Applying BepInEx config"
-Set-ConfigValue $configPath "EnableAssemblyCache" "false"
-Set-ConfigValue $configPath "UnityLogListening" "false"
-Set-ConfigValue $configPath "PreloadIL2CPPInteropAssemblies" "false"
-Set-ConfigValue $configPath "GlobalMetadataPath" "{GameDataPath}/il2cpp_data/Resources/System.JsonExtensions.dll-resources.dat"
+Set-ConfigValue $configPath "Caching" "EnableAssemblyCache" "false"
+Set-ConfigValue $configPath "Logging" "UnityLogListening" "false"
+Set-ConfigValue $configPath "IL2CPP" "PreloadIL2CPPInteropAssemblies" "false"
+Set-ConfigValue $configPath "IL2CPP" "GlobalMetadataPath" "{GameDataPath}/il2cpp_data/Resources/System.JsonExtensions.dll-resources.dat"
 
 if (!(Test-Path -LiteralPath $pluginsDir)) {
     New-Item -ItemType Directory -Path $pluginsDir | Out-Null

@@ -71,9 +71,37 @@ function Test-BepInExInstalled([string]$Path) {
     return (
         (Test-Path -LiteralPath (Join-Path $Path 'BepInEx\core\BepInEx.Core.dll')) -and
         (Test-Path -LiteralPath (Join-Path $Path 'BepInEx\core\BepInEx.Unity.IL2CPP.dll')) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'BepInEx\core\Il2CppInterop.Runtime.dll')) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'BepInEx\core\LibCpp2IL.dll')) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'BepInEx\core\Cpp2IL.Core.dll')) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'BepInEx\core\Il2CppInterop.Generator.dll')) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'BepInEx\core\Mono.Cecil.dll')) -and
+        (Test-Path -LiteralPath (Join-Path $Path 'BepInEx\core\Mono.Cecil.Rocks.dll')) -and
         (Test-Path -LiteralPath (Join-Path $Path 'doorstop_config.ini')) -and
         (Test-Path -LiteralPath (Join-Path $Path 'winhttp.dll'))
     )
+}
+
+function Require-InstallPayload {
+    $required = @(
+        @('scripts\reapply-limbus-fix.ps1', 'reapply script'),
+        @('scripts\rebuild-resources.ps1', 'resource rebuild script'),
+        @('data\il2cpp-api-functions-unity6000-no-profiler.txt', 'bundled IL2CPP API list'),
+        @('data\System.JsonExtensions.dll-resources.dat.template', 'metadata resource template'),
+        @('bin\Release\LimbusCanvasFix.dll', 'LimbusCanvasFix payload'),
+        @('bin\Release\LimbusWindowResizeFix.dll', 'LimbusWindowResizeFix payload'),
+        @('bin\Release\LimbusFramePacingFix.dll', 'LimbusFramePacingFix payload'),
+        @('tools\patch-libcpp\bin\Release\net6.0\PatchLibCpp.exe', 'PatchLibCpp executable'),
+        @('tools\patch-libcpp\bin\Release\net6.0\PatchLibCpp.dll', 'PatchLibCpp assembly'),
+        @('tools\patch-libcpp\bin\Release\net6.0\PatchLibCpp.runtimeconfig.json', 'PatchLibCpp runtime config'),
+        @('tools\patch-libcpp\bin\Release\net6.0\PatchLibCpp.deps.json', 'PatchLibCpp dependency manifest'),
+        @('tools\patch-libcpp\bin\Release\net6.0\Mono.Cecil.dll', 'PatchLibCpp Mono.Cecil dependency'),
+        @('tools\patch-libcpp\bin\Release\net6.0\Mono.Cecil.Rocks.dll', 'PatchLibCpp Mono.Cecil.Rocks dependency')
+    )
+
+    foreach ($item in $required) {
+        Require-File (Join-Path $PayloadRoot $item[0]) $item[1]
+    }
 }
 
 function Get-BepInExDownloadUrl {
@@ -163,13 +191,7 @@ function Sync-SelectedPlugins([string[]]$Selected) {
 
 function Invoke-Install {
     Require-GameFiles $GameDir
-    Require-File (Join-Path $PayloadRoot 'scripts\reapply-limbus-fix.ps1') 'reapply script'
-    Require-File (Join-Path $PayloadRoot 'scripts\rebuild-resources.ps1') 'resource rebuild script'
-    Require-File (Join-Path $PayloadRoot 'data\il2cpp-api-functions-unity6000-no-profiler.txt') 'bundled IL2CPP API list'
-    Require-File (Join-Path $PayloadRoot 'data\System.JsonExtensions.dll-resources.dat.template') 'metadata resource template'
-    Require-File (Join-Path $PayloadRoot 'bin\Release\LimbusCanvasFix.dll') 'LimbusCanvasFix payload'
-    Require-File (Join-Path $PayloadRoot 'bin\Release\LimbusWindowResizeFix.dll') 'LimbusWindowResizeFix payload'
-    Require-File (Join-Path $PayloadRoot 'bin\Release\LimbusFramePacingFix.dll') 'LimbusFramePacingFix payload'
+    Require-InstallPayload
 
     $selected = Get-SelectedPlugins
     Ensure-BepInEx
