@@ -1,11 +1,16 @@
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('install','verify','uninstall','launch','audit')]
+    [ValidateSet('install','verify','uninstall','launch','audit','selfupdate')]
     [string]$Action,
 
     [string]$GameDir,
     [string]$PayloadRoot = (Join-Path $PSScriptRoot 'payload'),
-    [string]$Plugins = 'canvas,resize,framepacing'
+    [string]$Plugins = 'canvas,resize,framepacing',
+    [string]$UpdateUrl,
+    [string]$AppDir,
+    [string]$Version,
+    [int]$ParentPid = 0,
+    [switch]$NoRelaunch
 )
 
 $ErrorActionPreference = 'Stop'
@@ -161,6 +166,7 @@ function Invoke-Install {
     Require-File (Join-Path $PayloadRoot 'scripts\reapply-limbus-fix.ps1') 'reapply script'
     Require-File (Join-Path $PayloadRoot 'scripts\rebuild-resources.ps1') 'resource rebuild script'
     Require-File (Join-Path $PayloadRoot 'data\il2cpp-api-functions-unity6000-no-profiler.txt') 'bundled IL2CPP API list'
+    Require-File (Join-Path $PayloadRoot 'data\System.JsonExtensions.dll-resources.dat.template') 'metadata resource template'
     Require-File (Join-Path $PayloadRoot 'bin\Release\LimbusCanvasFix.dll') 'LimbusCanvasFix payload'
     Require-File (Join-Path $PayloadRoot 'bin\Release\LimbusWindowResizeFix.dll') 'LimbusWindowResizeFix payload'
     Require-File (Join-Path $PayloadRoot 'bin\Release\LimbusFramePacingFix.dll') 'LimbusFramePacingFix payload'
@@ -259,10 +265,81 @@ function Invoke-Audit {
     Info "Payload audit passed."
 }
 
+function Invoke-SelfUpdate {
+    if ([string]::IsNullOrWhiteSpace($UpdateUrl)) {
+        Fail "UpdateUrl is required."
+    }
+    if ([string]::IsNullOrWhiteSpace($AppDir)) {
+        Fail "AppDir is required."
+    }
+    if (!(Test-Path -LiteralPath $AppDir)) {
+        Fail "App directory not found: $AppDir"
+    }
+
+    $workDir = Join-Path ([IO.Path]::GetTempPath()) ('limbus-multitool-update-' + [guid]::NewGuid().ToString('N'))
+    $zipPath = Join-Path $workDir 'update.zip'
+    $extractDir = Join-Path $workDir 'extract'
+    New-Item -ItemType Directory -Path $workDir,$extractDir -Force | Out-Null
+
+    try {
+        if (Test-Path -LiteralPath $UpdateUrl) {
+            Info "Using local update package."
+            Copy-Item -LiteralPath $UpdateUrl -Destination $zipPath -Force
+        } else {
+            Info "Downloading update package."
+            Invoke-WebRequest -Uri $UpdateUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 180
+        }
+
+        Info "Extracting update package."
+        Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
+
+        $sourceDir = $extractDir
+        $directExe = Join-Path $sourceDir 'Limbus Multi-tool.exe'
+        if (!(Test-Path -LiteralPath $directExe)) {
+            $nested = Get-ChildItem -LiteralPath $extractDir -Directory |
+                Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'Limbus Multi-tool.exe') } |
+                Select-Object -First 1
+            if ($null -ne $nested) {
+                $sourceDir = $nested.FullName
+            }
+        }
+
+        Require-File (Join-Path $sourceDir 'Limbus Multi-tool.exe') 'updated executable'
+        Require-File (Join-Path $sourceDir '_internal\backend.ps1') 'updated backend'
+        Require-File (Join-Path $sourceDir '_internal\payload') 'updated payload'
+
+        if ($ParentPid -gt 0) {
+            Info "Waiting for running app process $ParentPid to exit."
+            try {
+                Wait-Process -Id $ParentPid -Timeout 120 -ErrorAction SilentlyContinue
+            } catch {
+                Warn "Timed out waiting for process $ParentPid; continuing with update."
+            }
+        }
+
+        Info "Installing update into $AppDir."
+        Copy-Item -Path (Join-Path $sourceDir '*') -Destination $AppDir -Recurse -Force
+
+        if (![string]::IsNullOrWhiteSpace($Version)) {
+            Set-Content -LiteralPath (Join-Path $AppDir '_internal\app_version.txt') -Value $Version -Encoding UTF8
+        }
+
+        $exe = Join-Path $AppDir 'Limbus Multi-tool.exe'
+        if (!$NoRelaunch -and (Test-Path -LiteralPath $exe)) {
+            Info "Relaunching updated app."
+            Start-Process -FilePath $exe -WorkingDirectory $AppDir
+        }
+        Info "Self-update complete."
+    } finally {
+        Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 switch ($Action) {
     'install' { Invoke-Install }
     'verify' { Invoke-Verify }
     'uninstall' { Invoke-Uninstall }
     'launch' { Invoke-Launch }
     'audit' { Invoke-Audit }
+    'selfupdate' { Invoke-SelfUpdate }
 }

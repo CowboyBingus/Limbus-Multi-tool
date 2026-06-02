@@ -12,7 +12,7 @@ $artifactDir = Join-Path $repoRoot 'artifacts'
 $zipPath = Join-Path $artifactDir "Limbus-Multi-tool-$Version-win-x64.zip"
 
 if (!$SkipInstallerBuild) {
-    & (Join-Path $installerDir 'build_exe.ps1')
+    & (Join-Path $installerDir 'build_exe.ps1') -Version $Version
 }
 
 if (!(Test-Path -LiteralPath $distDir)) {

@@ -25,7 +25,12 @@ public static class Program
 {
     public static int Main(string[] args)
     {
-        string coreDir = @"C:\Program Files (x86)\Steam\steamapps\common\Limbus Company\BepInEx\core";
+        string coreDir = args.Length > 0
+            ? args[0]
+            : @"C:\Program Files (x86)\Steam\steamapps\common\Limbus Company\BepInEx\core";
+
+        if (Directory.Exists(Path.Combine(coreDir, "BepInEx", "core")))
+            coreDir = Path.Combine(coreDir, "BepInEx", "core");
 
         // Patch LibCpp2IL.dll first.
         PatchLibCpp2IL(Path.Combine(coreDir, "LibCpp2IL.dll"));

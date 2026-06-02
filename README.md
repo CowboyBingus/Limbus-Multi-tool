@@ -21,7 +21,7 @@ The Lethe team's source code was referenced as a starting point for patching the
 - `tools/test-stock-cpp2il/` - local diagnostic harness for Cpp2IL behavior.
 - `limbus-multitool/` - PySide6/Qt installer app for end users.
 - `scripts/` - local repair and symbol-map rebuild scripts.
-- `data/` - IL2CPP API name list used by the resource rebuild workflow.
+- `data/` - IL2CPP API name list and metadata resource carrier template used by the rebuild workflow.
 
 ## Build
 
@@ -37,10 +37,10 @@ dotnet build .\tools\patch-libcpp\patch-libcpp.csproj -c Release
 To build the end-user installer:
 
 ```powershell
-.\limbus-multitool\build_exe.ps1
+.\limbus-multitool\build_exe.ps1 -Version 1.2.0
 ```
 
-The distributable app is written to `limbus-multitool\dist\Limbus Multi-tool`. The release build output, generated payload, local BepInEx/runtime copies, and compiled artifacts are intentionally ignored by Git.
+The distributable app is written to `limbus-multitool\dist\Limbus Multi-tool`. The version is embedded into `app_version.txt` so the auto-updater can compare the installed build against GitHub releases. The release build output, generated payload, local BepInEx/runtime copies, and compiled artifacts are intentionally ignored by Git.
 
 ## Release
 
@@ -51,6 +51,6 @@ GitHub does not build or attach the executable just because the repository is pu
 .\scripts\publish-release.ps1 -Version 1.0.0 -Draft
 ```
 
-The first command writes `artifacts\Limbus-Multi-tool-1.0.0-win-x64.zip`. The second command requires the GitHub CLI (`gh`) and creates/pushes tag `v1.0.0`, then uploads the zip as a release asset.
+The first command writes `artifacts\Limbus-Multi-tool-1.0.0-win-x64.zip` and embeds `1.0.0` as the app version. The second command requires the GitHub CLI (`gh`) and creates/pushes tag `v1.0.0`, then uploads the zip as a release asset.
 
 The release is built locally because the plugin projects compile against BepInEx and generated IL2CPP interop assemblies from an installed game. A plain GitHub-hosted runner does not have those game-derived reference assemblies.

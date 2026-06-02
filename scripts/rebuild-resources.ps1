@@ -16,13 +16,25 @@ $ErrorActionPreference = 'Stop'
 $base = $GameDir
 $res  = "$base\LimbusCompany_Data\il2cpp_data\Resources\System.JsonExtensions.dll-resources.dat"
 $bak  = "$base\LimbusCompany_Data\il2cpp_data\Resources\System.JsonExtensions.dll-resources.dat.resource-head-bak"
+$template = Join-Path (Split-Path -Parent $PSScriptRoot) 'data\System.JsonExtensions.dll-resources.dat.template'
 $up   = "$base\UnityPlayer.dll"
 $ga   = "$base\GameAssembly.dll"
 $unityHeader = 'C:\Program Files\Unity\Hub\Editor\6000.3.2f1\Editor\Data\il2cpp\libil2cpp\il2cpp-api-functions.h'
 
 if (-not (Test-Path $up))  { throw "UnityPlayer.dll not found: $up" }
 if (-not (Test-Path $ga))  { throw "GameAssembly.dll not found: $ga" }
-if (-not (Test-Path $res)) { throw "Resources file not found: $res" }
+if (-not (Test-Path $res)) {
+  if (-not (Test-Path $template)) {
+    throw "Resources file not found: $res. Bundled template also not found: $template"
+  }
+
+  $resDir = Split-Path -Parent $res
+  if (-not (Test-Path -LiteralPath $resDir)) {
+    New-Item -ItemType Directory -Path $resDir -Force | Out-Null
+  }
+  Copy-Item -LiteralPath $template -Destination $res -Force
+  "Created resource carrier from bundled template: $res"
+}
 
 # Make a backup of the live file if one doesn't already exist (idempotent)
 if (-not (Test-Path $bak)) {

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 try:
-    from PySide6.QtCore import QSettings, Qt, QThread, Signal
+    from PySide6.QtCore import QSettings, Qt, QThread, QTimer, Signal
     from PySide6.QtGui import QFont
     from PySide6.QtWidgets import (
         QApplication,
@@ -33,6 +37,10 @@ except ModuleNotFoundError as exc:
 
 APP_NAME = "Limbus Multi-tool"
 ORG_NAME = "LimbusModTools"
+DEFAULT_VERSION = "0.0.0-dev"
+RELEASES_URL = "https://github.com/CowboyBingus/Limbus-Multi-tool/releases"
+LATEST_RELEASE_API = "https://api.github.com/repos/CowboyBingus/Limbus-Multi-tool/releases/latest"
+UPDATE_ASSET_PATTERN = re.compile(r"^Limbus-Multi-tool-.+-win-x64\.zip$", re.IGNORECASE)
 
 
 def app_root() -> Path:
@@ -47,6 +55,38 @@ def backend_path() -> Path:
 
 def payload_root() -> Path:
     return app_root() / "payload"
+
+
+def install_root() -> Path:
+    root = app_root()
+    if root.name.lower() == "_internal":
+        return root.parent
+    return root
+
+
+def current_version() -> str:
+    version_file = app_root() / "app_version.txt"
+    if version_file.exists():
+        value = version_file.read_text(encoding="utf-8", errors="replace").strip()
+        if value:
+            return value
+    return DEFAULT_VERSION
+
+
+def version_key(value: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", value))
+
+
+def is_newer_version(latest: str, current: str) -> bool:
+    latest_clean = latest.strip().lstrip("vV")
+    current_clean = current.strip().lstrip("vV")
+    if latest_clean.lower() == current_clean.lower():
+        return False
+    latest_key = version_key(latest_clean)
+    current_key = version_key(current_clean)
+    if latest_key and current_key:
+        return latest_key > current_key
+    return latest_clean.lower() != current_clean.lower()
 
 
 def default_game_dirs() -> list[Path]:
@@ -163,6 +203,66 @@ class CommandWorker(QThread):
             self.finished_ok.emit(False)
 
 
+class UpdateCheckWorker(QThread):
+    finished_result = Signal(object)
+
+    def run(self) -> None:
+        try:
+            request = urllib.request.Request(
+                LATEST_RELEASE_API,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": f"{APP_NAME}/{current_version()}",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=15) as response:
+                release = json.loads(response.read().decode("utf-8"))
+
+            tag = str(release.get("tag_name") or release.get("name") or "").strip()
+            if not tag:
+                raise RuntimeError("Latest release did not include a tag name.")
+
+            assets = release.get("assets") or []
+            selected_asset: dict[str, object] | None = None
+            for asset in assets:
+                name = str(asset.get("name") or "")
+                if UPDATE_ASSET_PATTERN.match(name):
+                    selected_asset = asset
+                    break
+            if selected_asset is None:
+                for asset in assets:
+                    name = str(asset.get("name") or "")
+                    if name.lower().endswith(".zip"):
+                        selected_asset = asset
+                        break
+            if selected_asset is None:
+                raise RuntimeError("Latest release does not have a downloadable zip asset.")
+
+            asset_url = str(selected_asset.get("browser_download_url") or "")
+            asset_name = str(selected_asset.get("name") or "release asset")
+            if not asset_url:
+                raise RuntimeError("Latest release asset is missing a download URL.")
+
+            installed = current_version()
+            self.finished_result.emit(
+                {
+                    "ok": True,
+                    "available": is_newer_version(tag, installed),
+                    "current": installed,
+                    "tag": tag,
+                    "name": str(release.get("name") or tag),
+                    "body": str(release.get("body") or ""),
+                    "html_url": str(release.get("html_url") or RELEASES_URL),
+                    "asset_name": asset_name,
+                    "asset_url": asset_url,
+                    "published_at": str(release.get("published_at") or ""),
+                }
+            )
+        except Exception as exc:
+            self.finished_result.emit({"ok": False, "error": str(exc), "current": current_version()})
+
+
 class StatusCard(QFrame):
     def __init__(self, title: str, value: str = "Not checked"):
         super().__init__()
@@ -195,8 +295,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings = QSettings(ORG_NAME, APP_NAME)
         self.worker: CommandWorker | None = None
+        self.update_worker: UpdateCheckWorker | None = None
+        self.available_update: dict[str, object] | None = None
+        self.update_check_manual = False
 
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(f"{APP_NAME} {current_version()}")
         self.resize(980, 720)
         self.setMinimumSize(860, 620)
 
@@ -238,10 +341,12 @@ class MainWindow(QMainWindow):
         self.bepin_card = StatusCard("BepInEx")
         self.payload_card = StatusCard("Installer Payload")
         self.plugin_card = StatusCard("Plugins")
+        self.update_card = StatusCard("Updates", f"Current: {current_version()}")
         grid.addWidget(self.game_card, 0, 0)
         grid.addWidget(self.bepin_card, 0, 1)
         grid.addWidget(self.payload_card, 1, 0)
         grid.addWidget(self.plugin_card, 1, 1)
+        grid.addWidget(self.update_card, 2, 0, 1, 2)
         layout.addLayout(grid)
 
         plugin_box = QFrame()
@@ -272,11 +377,13 @@ class MainWindow(QMainWindow):
         button_row = QHBoxLayout()
         self.install_btn = QPushButton("Install / Reapply Selected")
         self.launch_btn = QPushButton("Launch Game")
+        self.update_btn = QPushButton("Check for Updates")
 
         self.install_btn.clicked.connect(lambda: self.run_action("install", needs_game=True))
         self.launch_btn.clicked.connect(lambda: self.run_action("launch", needs_game=True))
+        self.update_btn.clicked.connect(self.update_button_clicked)
 
-        for button in (self.install_btn, self.launch_btn):
+        for button in (self.install_btn, self.launch_btn, self.update_btn):
             button.setMinimumHeight(36)
             button_row.addWidget(button)
         layout.addLayout(button_row)
@@ -294,6 +401,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log, 1)
 
         self.refresh_status()
+        QTimer.singleShot(1200, self.check_for_updates_auto)
 
     def browse(self) -> None:
         start = self.path_edit.text() or str(Path.home())
@@ -397,10 +505,131 @@ class MainWindow(QMainWindow):
         self.worker.finished_ok.connect(self.command_finished)
         self.worker.start()
 
+    def check_for_updates_auto(self) -> None:
+        if setting_bool(self.settings, "checkForUpdates", True):
+            self.check_for_updates(manual=False)
+
+    def update_button_clicked(self) -> None:
+        if self.available_update is not None:
+            self.confirm_and_start_update(self.available_update)
+        else:
+            self.check_for_updates(manual=True)
+
+    def check_for_updates(self, manual: bool) -> None:
+        if self.update_worker is not None and self.update_worker.isRunning():
+            if manual:
+                QMessageBox.information(self, "Update check", "An update check is already running.")
+            return
+
+        self.update_check_manual = manual
+        self.update_btn.setEnabled(False)
+        self.update_btn.setText("Checking...")
+        self.update_card.set_value("Checking GitHub releases...", None)
+        self.update_worker = UpdateCheckWorker()
+        self.update_worker.finished_result.connect(self.update_check_finished)
+        self.update_worker.start()
+
+    def update_check_finished(self, result: object) -> None:
+        self.update_btn.setEnabled(True)
+        if not isinstance(result, dict) or not result.get("ok"):
+            error = str(result.get("error") if isinstance(result, dict) else "Unknown update check error.")
+            self.available_update = None
+            self.update_btn.setText("Check for Updates")
+            self.update_card.set_value(f"Update check failed: {error}", False)
+            if self.update_check_manual:
+                QMessageBox.warning(self, "Update check failed", error)
+            return
+
+        if result.get("available"):
+            self.available_update = result
+            tag = str(result["tag"])
+            asset_name = str(result["asset_name"])
+            self.update_btn.setText("Install Update")
+            self.update_card.set_value(f"{tag} available: {asset_name}", False)
+            notified_version = str(self.settings.value("notifiedUpdateVersion", "", str))
+            if not self.update_check_manual and notified_version != tag:
+                self.settings.setValue("notifiedUpdateVersion", tag)
+                response = QMessageBox.question(
+                    self,
+                    "Update available",
+                    f"{APP_NAME} {tag} is available.\n\nInstall it now?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+                if response == QMessageBox.StandardButton.Yes:
+                    self.confirm_and_start_update(result, ask=False)
+            elif self.update_check_manual:
+                self.confirm_and_start_update(result)
+        else:
+            self.available_update = None
+            self.update_btn.setText("Check for Updates")
+            self.update_card.set_value(f"Up to date: {result['current']}", True)
+            if self.update_check_manual:
+                QMessageBox.information(self, "No update available", f"{APP_NAME} is up to date.")
+
+    def confirm_and_start_update(self, update: dict[str, object], ask: bool = True) -> None:
+        app_dir = install_root()
+        exe_path = app_dir / f"{APP_NAME}.exe"
+        if not exe_path.exists():
+            QMessageBox.warning(
+                self,
+                "Updater unavailable",
+                "Self-update is only available from the packaged app.",
+            )
+            return
+
+        tag = str(update["tag"])
+        asset_name = str(update["asset_name"])
+        if ask:
+            response = QMessageBox.question(
+                self,
+                "Install update",
+                f"Install {APP_NAME} {tag}?\n\n{asset_name}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if response != QMessageBox.StandardButton.Yes:
+                return
+
+        self.append_line("")
+        self.append_line(f"=== SELF UPDATE {tag} ===")
+        self.append_line("[info] Downloading update in a detached updater. The app will close and reopen.")
+        args = [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(backend_path()),
+            "-Action",
+            "selfupdate",
+            "-PayloadRoot",
+            str(payload_root()),
+            "-AppDir",
+            str(app_dir),
+            "-UpdateUrl",
+            str(update["asset_url"]),
+            "-Version",
+            tag,
+            "-ParentPid",
+            str(os.getpid()),
+        ]
+        try:
+            subprocess.Popen(
+                args,
+                cwd=str(app_dir),
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Update failed", str(exc))
+            return
+
+        QApplication.instance().quit()
+
     def set_busy(self, busy: bool) -> None:
         self.progress.setRange(0, 0 if busy else 1)
         self.progress.setValue(0 if busy else 1)
-        for button in (self.install_btn, self.launch_btn, self.canvas_check, self.resize_check, self.framepacing_check):
+        for button in (self.install_btn, self.launch_btn, self.update_btn, self.canvas_check, self.resize_check, self.framepacing_check):
             button.setEnabled(not busy)
 
     def append_line(self, text: str) -> None:

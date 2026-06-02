@@ -412,7 +412,7 @@ if (!$SkipCorePatch) {
     $patcher = Join-Path $RepoDir "tools\patch-libcpp\bin\Release\net6.0\PatchLibCpp.exe"
     Require-File $patcher
     Info "Patching BepInEx core/C++ interop tools"
-    & $patcher
+    & $patcher $coreDir
 
     $rebuildResources = Join-Path $RepoDir "scripts\rebuild-resources.ps1"
     if (Test-Path -LiteralPath $rebuildResources) {
@@ -430,6 +430,7 @@ Info "Applying BepInEx config"
 Set-ConfigValue $configPath "EnableAssemblyCache" "false"
 Set-ConfigValue $configPath "UnityLogListening" "false"
 Set-ConfigValue $configPath "PreloadIL2CPPInteropAssemblies" "false"
+Set-ConfigValue $configPath "GlobalMetadataPath" "{GameDataPath}/il2cpp_data/Resources/System.JsonExtensions.dll-resources.dat"
 
 if (!(Test-Path -LiteralPath $pluginsDir)) {
     New-Item -ItemType Directory -Path $pluginsDir | Out-Null

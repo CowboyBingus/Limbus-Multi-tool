@@ -17,6 +17,7 @@ New-Item -ItemType Directory -Path (Join-Path $payload 'tools\patch-libcpp\bin\R
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'scripts\reapply-limbus-fix.ps1') -Destination (Join-Path $payload 'scripts') -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'scripts\rebuild-resources.ps1') -Destination (Join-Path $payload 'scripts') -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'data\il2cpp-api-functions-unity6000-no-profiler.txt') -Destination (Join-Path $payload 'data') -Force
+Copy-Item -LiteralPath (Join-Path $RepoRoot 'data\System.JsonExtensions.dll-resources.dat.template') -Destination (Join-Path $payload 'data') -Force
 
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'src\LimbusCanvasFix\bin\Release\LimbusCanvasFix.dll') -Destination (Join-Path $payload 'bin\Release') -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot 'src\LimbusWindowResizeFix\bin\Release\LimbusWindowResizeFix.dll') -Destination (Join-Path $payload 'bin\Release') -Force

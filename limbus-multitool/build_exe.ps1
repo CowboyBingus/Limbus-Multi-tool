@@ -1,6 +1,11 @@
+param(
+    [string]$Version = (Get-Date -Format 'yyyy.MM.dd-HHmm')
+)
+
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $venv = Join-Path $PSScriptRoot '.venv'
+$versionFile = Join-Path $PSScriptRoot 'app_version.txt'
 
 if (!(Test-Path -LiteralPath $venv)) {
     py -3.10 -m venv $venv
@@ -14,6 +19,7 @@ dotnet build (Join-Path $root 'src\LimbusWindowResizeFix\LimbusWindowResizeFix.c
 dotnet build (Join-Path $root 'src\LimbusFramePacingFix\LimbusFramePacingFix.csproj') -c Release -p:SkipDeploy=true
 dotnet build (Join-Path $root 'tools\patch-libcpp\patch-libcpp.csproj') -c Release
 & (Join-Path $PSScriptRoot 'prepare_release_payload.ps1') -RepoRoot $root
+Set-Content -LiteralPath $versionFile -Value $Version -Encoding UTF8
 
 $sep = ';'
 $buildPath = Join-Path $PSScriptRoot 'build'
@@ -27,6 +33,7 @@ $distPath = Join-Path $PSScriptRoot 'dist'
     --distpath $distPath `
     --specpath $PSScriptRoot `
     --add-data "$(Join-Path $PSScriptRoot 'backend.ps1')${sep}." `
+    --add-data "$versionFile${sep}." `
     --add-data "$(Join-Path $PSScriptRoot 'payload')${sep}payload" `
     --add-data "$(Join-Path $PSScriptRoot 'assets')${sep}assets" `
     (Join-Path $PSScriptRoot 'limbus_installer.py')

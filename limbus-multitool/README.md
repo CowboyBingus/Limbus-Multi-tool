@@ -19,10 +19,10 @@ py -3.10 -m venv .\limbus-multitool\.venv
 To build a standalone executable:
 
 ```powershell
-.\limbus-multitool\build_exe.ps1
+.\limbus-multitool\build_exe.ps1 -Version 1.2.0
 ```
 
-Distribute the whole `dist\Limbus Multi-tool` folder. The executable depends on its adjacent `_internal` directory, which contains Qt, the backend script, and the release payload.
+Distribute the whole `dist\Limbus Multi-tool` folder. The executable depends on its adjacent `_internal` directory, which contains Qt, the backend script, the embedded app version, and the release payload.
 
 ## User workflow
 
@@ -37,4 +37,6 @@ Expected verification markers:
 - `Enabled resizing for HWND`
 - `Frame pacing apply`
 
-The installer redistributes only this project's plugin DLLs, patch tooling, and scripts. It derives game-specific IL2CPP symbols from the user's local `UnityPlayer.dll` and `GameAssembly.dll`.
+The app checks GitHub releases automatically on startup and can replace the packaged `dist\Limbus Multi-tool` folder from the latest `Limbus-Multi-tool-*-win-x64.zip` release asset.
+
+The installer redistributes only this project's plugin DLLs, patch tooling, scripts, and a metadata resource carrier template. It derives game-specific IL2CPP symbols from the user's local `UnityPlayer.dll` and `GameAssembly.dll`.
