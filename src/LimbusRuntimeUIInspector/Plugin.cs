@@ -24,7 +24,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string GUID = "com.you.limbusruntimeuiinspector";
     public const string NAME = "LimbusRuntimeUIInspector";
-    public const string VERSION = "0.2.0";
+    public const string VERSION = "0.3.0";
 
     internal static new ManualLogSource Log = null!;
     internal static ConfigEntry<bool> Enabled = null!;
@@ -38,7 +38,7 @@ public sealed class Plugin : BasePlugin
         Log = base.Log;
         Enabled = Config.Bind("General", "Enabled", true, "Starts the local runtime UI inspector server.");
         Port = Config.Bind("Server", "Port", 43129, "Localhost HTTP port for the inspector browser UI.");
-        MaxResults = Config.Bind("Inspector", "MaxResults", 1000, "Maximum live element rows returned per scan.");
+        MaxResults = Config.Bind("Inspector", "MaxResults", 5000, "Maximum live element rows returned per scan.");
         RequestTimeoutMilliseconds = Config.Bind("Inspector", "RequestTimeoutMilliseconds", 2000, "Reserved for future async inspector operations.");
         DebugLogging = Config.Bind("Diagnostics", "DebugLogging", true, "Writes detailed inspector server and scan/edit job lifecycle logs.");
 
@@ -168,7 +168,7 @@ internal static class InspectorServer
                     if (request.Query.TryGetValue("maxResults", out var rawMaxResults) &&
                         int.TryParse(rawMaxResults, NumberStyles.Integer, CultureInfo.InvariantCulture, out var requestedMaxResults))
                     {
-                        maxResults = Math.Clamp(requestedMaxResults, 1, 5000);
+                        maxResults = Math.Clamp(requestedMaxResults, 1, 20000);
                     }
 
                     var job = InspectorJobs.QueueScan(filter, includeInactive, includeTransforms, maxResults);
@@ -585,7 +585,8 @@ internal static class GameObjectRootObserveDetour
 
 internal static class CanvasRootRegistry
 {
-    private const int MaxKnownRoots = 512;
+    private const int MaxKnownRoots = 4096;
+    private const long MaxRootObservationAge = 20000;
 
     private static readonly object sync = new();
     private static readonly Dictionary<IntPtr, long> rootsSeen = new();
@@ -643,44 +644,25 @@ internal static class CanvasRootRegistry
         if (transform == IntPtr.Zero)
             return;
 
-        var addedCount = 0;
         int rootCount;
         try
         {
+            var root = UnityUiRuntime.TryGetTopmostTransform(transform);
+            if (root == IntPtr.Zero)
+                return;
+
             var observed = Interlocked.Increment(ref observedCount);
+            var added = false;
             lock (sync)
             {
-                if (rootsSeen.ContainsKey(transform))
-                {
-                    rootsSeen[transform] = ++sequence;
-                    TrimLocked();
-                    rootCount = rootsSeen.Count;
-                    if (observed <= 8 || observed % 1000 == 0)
-                        Plugin.Debug($"UI root candidate refreshed from {source}: start=0x{transform.ToString("X")}, roots={rootCount}, observed={observed}.");
-                    return;
-                }
-            }
-
-            var current = transform;
-            for (var depth = 0; depth < 16 && current != IntPtr.Zero; depth++)
-            {
-                lock (sync)
-                {
-                    if (!rootsSeen.ContainsKey(current))
-                        addedCount++;
-                    rootsSeen[current] = ++sequence;
-                    TrimLocked();
-                    rootCount = rootsSeen.Count;
-                }
-
-                current = UnityUiRuntime.TryGetParentTransform(current);
-            }
-
-            lock (sync)
+                added = !rootsSeen.ContainsKey(root);
+                rootsSeen[root] = ++sequence;
+                TrimLocked();
                 rootCount = rootsSeen.Count;
+            }
 
-            if (observed <= 8 || observed % 1000 == 0)
-                Plugin.Debug($"UI root candidates observed from {source}: start=0x{transform.ToString("X")}, added={addedCount}, roots={rootCount}, observed={observed}.");
+            if (added || observed <= 8 || observed % 1000 == 0)
+                Plugin.Debug($"Hierarchy root observed from {source}: start=0x{transform.ToString("X")}, root=0x{root.ToString("X")}, added={added}, roots={rootCount}, observed={observed}.");
         }
         catch (Exception ex)
         {
@@ -694,13 +676,54 @@ internal static class CanvasRootRegistry
     {
         lock (sync)
         {
+            PruneStaleLocked();
             var roots = new List<KeyValuePair<IntPtr, long>>(rootsSeen);
-            roots.Sort((left, right) => right.Value.CompareTo(left.Value));
+            roots.Sort((left, right) => left.Key.ToInt64().CompareTo(right.Key.ToInt64()));
             var result = new List<IntPtr>(roots.Count);
             foreach (var pair in roots)
                 result.Add(pair.Key);
             return result;
         }
+    }
+
+    public static void ForgetRoot(IntPtr root, string reason)
+    {
+        if (root == IntPtr.Zero)
+            return;
+
+        var removed = false;
+        lock (sync)
+            removed = rootsSeen.Remove(root);
+
+        if (removed)
+            Plugin.Debug($"Forgot stale hierarchy root 0x{root.ToString("X")} ({reason}).");
+    }
+
+    private static void PruneStaleLocked()
+    {
+        if (rootsSeen.Count == 0)
+            return;
+
+        var newest = 0L;
+        foreach (var pair in rootsSeen)
+            newest = Math.Max(newest, pair.Value);
+
+        var cutoff = newest - MaxRootObservationAge;
+        if (cutoff <= 0)
+            return;
+
+        var stale = new List<IntPtr>();
+        foreach (var pair in rootsSeen)
+        {
+            if (pair.Value < cutoff)
+                stale.Add(pair.Key);
+        }
+
+        foreach (var root in stale)
+            rootsSeen.Remove(root);
+
+        if (stale.Count > 0)
+            Plugin.Debug($"Pruned {stale.Count} stale hierarchy roots older than observation sequence {cutoff}.");
     }
 
     private static void TrimLocked()
@@ -886,7 +909,7 @@ internal sealed class InspectorJob
 
 internal static class RectTransformCapture
 {
-    private const int MaxKnownElements = 2000;
+    private const int MaxKnownElements = 50000;
 
     private static readonly object sync = new();
     private static readonly Dictionary<int, IntPtr> knownRects = new();
@@ -996,7 +1019,7 @@ internal sealed class HttpRequest
 
 internal static unsafe class UnityUiRuntime
 {
-    private const int MaxTraversalNodes = 25000;
+    private const int MaxTraversalNodes = 100000;
 
     private static bool initialized;
     private static IntPtr objectClass;
@@ -1051,6 +1074,20 @@ internal static unsafe class UnityUiRuntime
         return transform == IntPtr.Zero ? IntPtr.Zero : InvokeObject(transformGetParent, transform);
     }
 
+    public static IntPtr TryGetTopmostTransform(IntPtr transform)
+    {
+        EnsureInitialized();
+        var current = transform;
+        var topmost = transform;
+        for (var depth = 0; depth < 256 && current != IntPtr.Zero; depth++)
+        {
+            topmost = current;
+            current = InvokeObject(transformGetParent, current);
+        }
+
+        return topmost;
+    }
+
     public static ScanResult ScanObservedRoots(string? filter, bool includeInactive, bool includeTransforms, int maxResults)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -1090,7 +1127,14 @@ internal static unsafe class UnityUiRuntime
 
             visitedCount++;
             if (depth < 64)
-                PushChildren(transform, depth, stack);
+            {
+                var childrenPushed = PushChildren(transform, depth, stack);
+                if (!childrenPushed && depth == 0)
+                {
+                    CanvasRootRegistry.ForgetRoot(transform, "root child traversal failed");
+                    continue;
+                }
+            }
 
             var isRectTransform = IsRectTransformObject(transform);
             if (!isRectTransform && !includeTransforms)
@@ -1106,6 +1150,8 @@ internal static unsafe class UnityUiRuntime
             catch (Exception ex)
             {
                 readFailureCount++;
+                if (depth == 0)
+                    CanvasRootRegistry.ForgetRoot(transform, "root read failed");
                 if (readFailureCount <= 12)
                     Plugin.Debug($"Inspector scan: failed to read transform 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
                 continue;
@@ -1123,8 +1169,6 @@ internal static unsafe class UnityUiRuntime
             candidates.Add(new ScannedUiElement(item, transform));
             if (!isRectTransform)
                 transformOnlyCount++;
-            if (!includeInactive && candidates.Count >= maxResults)
-                break;
         }
 
         candidates.Sort((left, right) =>
@@ -1137,7 +1181,8 @@ internal static unsafe class UnityUiRuntime
             if (selfCompare != 0)
                 return selfCompare;
 
-            return string.Compare(left.Element.Path, right.Element.Path, StringComparison.OrdinalIgnoreCase);
+            var pathCompare = string.Compare(left.Element.Path, right.Element.Path, StringComparison.OrdinalIgnoreCase);
+            return pathCompare != 0 ? pathCompare : left.Element.Id.CompareTo(right.Element.Id);
         });
 
         var returnedCount = Math.Min(Math.Max(1, maxResults), candidates.Count);
@@ -1347,7 +1392,7 @@ internal static unsafe class UnityUiRuntime
             Round(scale.Z));
     }
 
-    private static void PushChildren(IntPtr transform, int depth, Stack<(IntPtr Transform, int Depth)> stack)
+    private static bool PushChildren(IntPtr transform, int depth, Stack<(IntPtr Transform, int Depth)> stack)
     {
         int childCount;
         try
@@ -1357,7 +1402,7 @@ internal static unsafe class UnityUiRuntime
         catch (Exception ex)
         {
             Plugin.Debug($"Inspector scan: failed to read child count for 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
-            return;
+            return false;
         }
 
         for (var i = childCount - 1; i >= 0; i--)
@@ -1373,6 +1418,8 @@ internal static unsafe class UnityUiRuntime
                 Plugin.Debug($"Inspector scan: failed to read child {i} for 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
             }
         }
+
+        return true;
     }
 
     private static bool MatchesFilter(UiElement item, string? filter)
@@ -1673,7 +1720,7 @@ main{display:grid;grid-template-columns:minmax(360px,1fr) 360px;height:calc(100v
 <input id="filter" type="text" placeholder="Filter by name or hierarchy path">
 <label><input id="inactive" type="checkbox"> include inactive</label>
 <label><input id="transforms" type="checkbox" checked> transforms</label>
-<input id="limit" type="number" min="1" max="5000" step="100" value="1000" title="Maximum returned rows" style="width:76px">
+<input id="limit" type="number" min="1" max="20000" step="500" value="5000" title="Maximum returned rows" style="width:82px">
 <button id="refresh" class="primary">Refresh</button>
 </div>
 <div class="tablewrap"><table><thead><tr><th style="width:80px">ID</th><th style="width:120px">Type</th><th style="width:210px">Name</th><th>Path</th><th style="width:70px">Active</th></tr></thead><tbody id="rows"></tbody></table></div>
@@ -1708,10 +1755,11 @@ async function api(path, opts){const r=await fetch(path, opts); const j=await r.
 function setStatus(s){$("status").textContent=s||""}
 function fill(e){selected=e;$("empty").hidden=true;$("editor").hidden=false;$("title").textContent=`${e.name} (${e.id})`;$("path").textContent=e.path;$("active").checked=e.activeSelf;$("posTitle").textContent=e.kind==="RectTransform"?"Anchored Position":"Local Position";$("rectOnly").hidden=e.kind!=="RectTransform";for(const f of fields)$(`${f}`).value=e[f]??"";document.querySelectorAll("tr").forEach(tr=>tr.classList.toggle("selected",Number(tr.dataset.id)===e.id));}
 function render(){const tbody=$("rows");tbody.innerHTML="";for(const e of rows){const tr=document.createElement("tr");tr.dataset.id=e.id;tr.innerHTML=`<td>${e.id}</td><td>${esc(e.kind||"")}</td><td title="${esc(e.name)}">${esc(e.name)}</td><td title="${esc(e.path)}">${esc(e.path)}</td><td>${e.activeInHierarchy?"yes":"no"}</td>`;tr.onclick=()=>fill(e);tbody.appendChild(tr);}}
+function replaceRow(e){const i=rows.findIndex(x=>x.id===e.id);if(i>=0)rows[i]=e;else rows.unshift(e);render();fill(e);}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 async function waitJob(job, label){let current=job;while(current.state==="pending"||current.state==="running"){setStatus(`${label} ${current.state} (${current.elapsedMs}ms)`);await new Promise(r=>setTimeout(r,250));current=await api(`/api/job?id=${current.jobId}`);}if(current.state!=="complete")throw new Error(current.error||`${label} failed`);return current;}
-async function refresh(){setStatus("queueing scan");const q=new URLSearchParams({filter:$("filter").value||"",includeInactive:$("inactive").checked?"1":"0",includeTransforms:$("transforms").checked?"1":"0",maxResults:$("limit").value||"1000"});const job=await api(`/api/scan?${q}`);const done=await waitJob(job,"scan");rows=done.result?.elements||[];render();setStatus(`${rows.length} elements`);if(selected){const next=rows.find(x=>x.id===selected.id);if(next)fill(next);}}
-async function apply(activeOverride){if(!selected)return;const body={id:selected.id};body.active=activeOverride===undefined?$("active").checked:activeOverride;for(const f of fields){const v=$(`${f}`).value;if(v!=="")body[f]=Number(v);}setStatus("queueing edit");const job=await api("/api/edit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const done=await waitJob(job,"edit");if(done.element)selected=done.element;setStatus("applied");await refresh();}
+async function refresh(){setStatus("queueing scan");const q=new URLSearchParams({filter:$("filter").value||"",includeInactive:$("inactive").checked?"1":"0",includeTransforms:$("transforms").checked?"1":"0",maxResults:$("limit").value||"5000"});const job=await api(`/api/scan?${q}`);const done=await waitJob(job,"scan");rows=done.result?.elements||[];render();setStatus(`${rows.length} elements`);if(selected){const next=rows.find(x=>x.id===selected.id);if(next)fill(next);}}
+async function apply(activeOverride){if(!selected)return;const body={id:selected.id};body.active=activeOverride===undefined?$("active").checked:activeOverride;for(const f of fields){const v=$(`${f}`).value;if(v!=="")body[f]=Number(v);}setStatus("queueing edit");const job=await api("/api/edit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const done=await waitJob(job,"edit");if(done.element){selected=done.element;replaceRow(done.element);}setStatus("applied");}
 $("refresh").onclick=()=>refresh().catch(e=>setStatus(e.message));$("apply").onclick=()=>apply().catch(e=>setStatus(e.message));$("hide").onclick=()=>apply(false).catch(e=>setStatus(e.message));$("filter").onkeydown=e=>{if(e.key==="Enter")refresh().catch(err=>setStatus(err.message));};setStatus("ready");
 </script>
 </body>

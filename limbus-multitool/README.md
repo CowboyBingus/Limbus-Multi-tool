@@ -39,7 +39,7 @@ Expected verification markers:
 - `Frame pacing apply`
 - `LimbusRuntimeUIInspector` when the optional inspector is selected
 
-The runtime inspector is a developer tool. When selected, launch the game and open `http://127.0.0.1:43129/` on the same machine to scan and edit live `RectTransform` and transform-only screen objects. It seeds roots from CanvasScaler, RectTransform relayout, and GameObject activation hooks, defaults to active objects, and can include inactive entries when needed.
+The runtime inspector is a developer tool. When selected, launch the game and open `http://127.0.0.1:43129/` on the same machine to scan and edit live `RectTransform` and transform-only screen objects. It seeds roots from CanvasScaler, RectTransform relayout, and GameObject activation hooks, prunes stale roots before scans, returns 5000 active rows by default, and can include inactive entries when needed.
 
 The app checks GitHub releases automatically on startup and can replace the packaged `dist\Limbus Multi-tool` folder from the latest `Limbus-Multi-tool-*-win-x64.zip` release asset.
 
