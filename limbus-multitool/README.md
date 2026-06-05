@@ -1,6 +1,6 @@
 # Limbus Multi-tool
 
-Qt-based installer for the Limbus ultrawide, window-resize, and FPS/frame-pacing plugins. It can install the official BepInEx Unity IL2CPP Windows x64 build when BepInEx is not already present.
+Qt-based installer for the Limbus ultrawide, window-resize, FPS/frame-pacing, and optional runtime UI inspector plugins. It can install the official BepInEx Unity IL2CPP Windows x64 build when BepInEx is not already present.
 
 ## Developer usage
 
@@ -10,6 +10,7 @@ From the repository root:
 dotnet build .\src\LimbusCanvasFix\LimbusCanvasFix.csproj -c Release -p:SkipDeploy=true
 dotnet build .\src\LimbusWindowResizeFix\LimbusWindowResizeFix.csproj -c Release -p:SkipDeploy=true
 dotnet build .\src\LimbusFramePacingFix\LimbusFramePacingFix.csproj -c Release -p:SkipDeploy=true
+dotnet build .\src\LimbusRuntimeUIInspector\LimbusRuntimeUIInspector.csproj -c Release -p:SkipDeploy=true
 .\limbus-multitool\prepare_release_payload.ps1
 py -3.10 -m venv .\limbus-multitool\.venv
 .\limbus-multitool\.venv\Scripts\pip install -r .\limbus-multitool\requirements.txt
@@ -36,6 +37,9 @@ Expected verification markers:
 - `Applied CanvasScaler ultrawide fix`
 - `Enabled resizing for HWND`
 - `Frame pacing apply`
+- `LimbusRuntimeUIInspector` when the optional inspector is selected
+
+The runtime inspector is a developer tool. When selected, launch the game and open `http://127.0.0.1:43129/` on the same machine to scan and edit live UI `RectTransform` values. It walks observed canvas roots on the Unity main thread, defaults to active objects, and can include inactive entries when needed.
 
 The app checks GitHub releases automatically on startup and can replace the packaged `dist\Limbus Multi-tool` folder from the latest `Limbus-Multi-tool-*-win-x64.zip` release asset.
 

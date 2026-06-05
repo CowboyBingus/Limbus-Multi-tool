@@ -187,6 +187,7 @@ function Require-InstallPayload {
         @('bin\Release\LimbusCanvasFix.dll', 'LimbusCanvasFix payload'),
         @('bin\Release\LimbusWindowResizeFix.dll', 'LimbusWindowResizeFix payload'),
         @('bin\Release\LimbusFramePacingFix.dll', 'LimbusFramePacingFix payload'),
+        @('bin\Release\LimbusRuntimeUIInspector.dll', 'LimbusRuntimeUIInspector payload'),
         @('tools\patch-libcpp\bin\Release\net6.0\PatchLibCpp.exe', 'PatchLibCpp executable'),
         @('tools\patch-libcpp\bin\Release\net6.0\PatchLibCpp.dll', 'PatchLibCpp assembly'),
         @('tools\patch-libcpp\bin\Release\net6.0\PatchLibCpp.runtimeconfig.json', 'PatchLibCpp runtime config'),
@@ -394,6 +395,7 @@ function Assert-InstalledState([string[]]$Selected) {
         canvas = 'LimbusCanvasFix.dll'
         resize = 'LimbusWindowResizeFix.dll'
         framepacing = 'LimbusFramePacingFix.dll'
+        inspector = 'LimbusRuntimeUIInspector.dll'
     }
 
     foreach ($key in $pluginMap.Keys) {
@@ -493,7 +495,7 @@ function Get-SelectedPlugins {
     foreach ($raw in ($Plugins -split ',')) {
         $name = $raw.Trim().ToLowerInvariant()
         if ([string]::IsNullOrWhiteSpace($name)) { continue }
-        if ($name -notin @('canvas','resize','framepacing')) {
+        if ($name -notin @('canvas','resize','framepacing','inspector')) {
             Fail "Unknown plugin selection: $name"
         }
         if ($name -notin $selected) {
@@ -512,9 +514,10 @@ function Sync-SelectedPlugins([string[]]$Selected) {
         canvas = 'LimbusCanvasFix.dll'
         resize = 'LimbusWindowResizeFix.dll'
         framepacing = 'LimbusFramePacingFix.dll'
+        inspector = 'LimbusRuntimeUIInspector.dll'
     }
 
-    foreach ($key in @('canvas','resize','framepacing')) {
+    foreach ($key in @('canvas','resize','framepacing','inspector')) {
         $dllName = $pluginMap[$key]
         $path = Join-Path $pluginDir $dllName
         if ($Selected -contains $key) {
@@ -583,7 +586,7 @@ function Invoke-Uninstall {
     Require-GameDir $GameDir
     Stop-GameIfRunning -Required
     $pluginDir = Get-PluginDir $GameDir
-    foreach ($name in @('LimbusCanvasFix.dll','LimbusWindowResizeFix.dll','LimbusFramePacingFix.dll')) {
+    foreach ($name in @('LimbusCanvasFix.dll','LimbusWindowResizeFix.dll','LimbusFramePacingFix.dll','LimbusRuntimeUIInspector.dll')) {
         $path = Join-Path $pluginDir $name
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Force

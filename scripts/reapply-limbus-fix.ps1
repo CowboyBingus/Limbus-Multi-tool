@@ -589,6 +589,9 @@ if (!$SkipBuild) {
 
     Info "Building LimbusFramePacingFix"
     dotnet build (Join-Path $RepoDir "src\LimbusFramePacingFix\LimbusFramePacingFix.csproj") -c Release /p:SkipDeploy=true
+
+    Info "Building LimbusRuntimeUIInspector"
+    dotnet build (Join-Path $RepoDir "src\LimbusRuntimeUIInspector\LimbusRuntimeUIInspector.csproj") -c Release /p:SkipDeploy=true
 }
 
 if (!$SkipCorePatch) {
@@ -649,6 +652,13 @@ $framePacingPluginDll = Resolve-FirstExistingPath @(
 ) "LimbusFramePacingFix.dll"
 Info "Deploying LimbusFramePacingFix.dll"
 Copy-Item -LiteralPath $framePacingPluginDll -Destination (Join-Path $pluginsDir "LimbusFramePacingFix.dll") -Force
+
+$inspectorPluginDll = Resolve-FirstExistingPath @(
+    (Join-Path $RepoDir "src\LimbusRuntimeUIInspector\bin\Release\LimbusRuntimeUIInspector.dll"),
+    (Join-Path $RepoDir "bin\Release\LimbusRuntimeUIInspector.dll")
+) "LimbusRuntimeUIInspector.dll"
+Info "Deploying LimbusRuntimeUIInspector.dll"
+Copy-Item -LiteralPath $inspectorPluginDll -Destination (Join-Path $pluginsDir "LimbusRuntimeUIInspector.dll") -Force
 
 if ($interopReady) {
     Info "Reducing interop folder to known working load set"

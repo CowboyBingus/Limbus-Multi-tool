@@ -63,6 +63,7 @@ REQUIRED_PAYLOAD_FILES = (
     ("bin", "Release", "LimbusCanvasFix.dll"),
     ("bin", "Release", "LimbusWindowResizeFix.dll"),
     ("bin", "Release", "LimbusFramePacingFix.dll"),
+    ("bin", "Release", "LimbusRuntimeUIInspector.dll"),
     ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.exe"),
     ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.dll"),
     ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.runtimeconfig.json"),
@@ -391,16 +392,21 @@ class MainWindow(QMainWindow):
         self.resize_check.setToolTip("Restores the resizable window border after the Unity engine upgrade.")
         self.framepacing_check = QCheckBox("FPS / frame pacing fix")
         self.framepacing_check.setToolTip("Forces a 240 FPS cap, disables Unity v-sync, and keeps maximized window mode.")
+        self.inspector_check = QCheckBox("Runtime UI inspector")
+        self.inspector_check.setToolTip("Developer tool: exposes a localhost browser editor for active RectTransform UI elements.")
         self.canvas_check.setChecked(setting_bool(self.settings, "pluginCanvas", True))
         self.resize_check.setChecked(setting_bool(self.settings, "pluginResize", True))
         self.framepacing_check.setChecked(setting_bool(self.settings, "pluginFramePacing", True))
+        self.inspector_check.setChecked(setting_bool(self.settings, "pluginInspector", False))
         self.canvas_check.stateChanged.connect(self.save_plugin_selection)
         self.resize_check.stateChanged.connect(self.save_plugin_selection)
         self.framepacing_check.stateChanged.connect(self.save_plugin_selection)
+        self.inspector_check.stateChanged.connect(self.save_plugin_selection)
         plugin_layout.addWidget(plugin_title)
         plugin_layout.addWidget(self.canvas_check)
         plugin_layout.addWidget(self.resize_check)
         plugin_layout.addWidget(self.framepacing_check)
+        plugin_layout.addWidget(self.inspector_check)
         layout.addWidget(plugin_box)
 
         button_row = QHBoxLayout()
@@ -460,12 +466,15 @@ class MainWindow(QMainWindow):
             selected.append("resize")
         if self.framepacing_check.isChecked():
             selected.append("framepacing")
+        if self.inspector_check.isChecked():
+            selected.append("inspector")
         return selected
 
     def save_plugin_selection(self) -> None:
         self.settings.setValue("pluginCanvas", self.canvas_check.isChecked())
         self.settings.setValue("pluginResize", self.resize_check.isChecked())
         self.settings.setValue("pluginFramePacing", self.framepacing_check.isChecked())
+        self.settings.setValue("pluginInspector", self.inspector_check.isChecked())
 
     def refresh_status(self) -> None:
         game_dir = self.selected_game_dir()
@@ -495,16 +504,19 @@ class MainWindow(QMainWindow):
 
         if game_dir:
             plugin_dir = game_dir / "BepInEx" / "plugins"
-            installed = [
-                (plugin_dir / "LimbusCanvasFix.dll").exists(),
-                (plugin_dir / "LimbusWindowResizeFix.dll").exists(),
-                (plugin_dir / "LimbusFramePacingFix.dll").exists(),
-            ]
+            plugin_files = {
+                "canvas": "LimbusCanvasFix.dll",
+                "resize": "LimbusWindowResizeFix.dll",
+                "framepacing": "LimbusFramePacingFix.dll",
+                "inspector": "LimbusRuntimeUIInspector.dll",
+            }
+            expected = [plugin_files[name] for name in self.selected_plugins()]
+            installed = [(plugin_dir / name).exists() for name in expected]
             installed_count = sum(1 for present in installed if present)
-            if installed_count == len(installed):
-                self.plugin_card.set_value("All plugins installed", True)
+            if expected and installed_count == len(installed):
+                self.plugin_card.set_value("Selected plugins installed", True)
             elif installed_count:
-                self.plugin_card.set_value(f"{installed_count} of {len(installed)} plugins installed", False)
+                self.plugin_card.set_value(f"{installed_count} of {len(expected)} selected plugins installed", False)
             else:
                 self.plugin_card.set_value("Plugins not installed", None)
         else:
@@ -657,7 +669,7 @@ class MainWindow(QMainWindow):
     def set_busy(self, busy: bool) -> None:
         self.progress.setRange(0, 0 if busy else 1)
         self.progress.setValue(0 if busy else 1)
-        for button in (self.install_btn, self.launch_btn, self.update_btn, self.canvas_check, self.resize_check, self.framepacing_check):
+        for button in (self.install_btn, self.launch_btn, self.update_btn, self.canvas_check, self.resize_check, self.framepacing_check, self.inspector_check):
             button.setEnabled(not busy)
 
     def append_line(self, text: str) -> None:

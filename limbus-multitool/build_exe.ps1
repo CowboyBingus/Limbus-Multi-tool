@@ -24,6 +24,7 @@ Invoke-Checked 'Installing Python requirements' { & (Join-Path $venv 'Scripts\pi
 Invoke-Checked 'Building LimbusCanvasFix' { dotnet build (Join-Path $root 'src\LimbusCanvasFix\LimbusCanvasFix.csproj') -c Release -p:SkipDeploy=true }
 Invoke-Checked 'Building LimbusWindowResizeFix' { dotnet build (Join-Path $root 'src\LimbusWindowResizeFix\LimbusWindowResizeFix.csproj') -c Release -p:SkipDeploy=true }
 Invoke-Checked 'Building LimbusFramePacingFix' { dotnet build (Join-Path $root 'src\LimbusFramePacingFix\LimbusFramePacingFix.csproj') -c Release -p:SkipDeploy=true }
+Invoke-Checked 'Building LimbusRuntimeUIInspector' { dotnet build (Join-Path $root 'src\LimbusRuntimeUIInspector\LimbusRuntimeUIInspector.csproj') -c Release -p:SkipDeploy=true }
 Invoke-Checked 'Building PatchLibCpp' { dotnet build (Join-Path $root 'tools\patch-libcpp\patch-libcpp.csproj') -c Release }
 & (Join-Path $PSScriptRoot 'prepare_release_payload.ps1') -RepoRoot $root
 Set-Content -LiteralPath $versionFile -Value $Version -Encoding UTF8
