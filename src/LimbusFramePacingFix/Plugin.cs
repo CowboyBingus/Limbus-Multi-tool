@@ -2,10 +2,7 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
-using HarmonyLib;
 using Il2CppInterop.Runtime;
-using LimbusFramePacingFix.GameWrappers;
-using LimbusFramePacingFix.GameWrappers.LocalSave;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Collections.Generic;
@@ -13,7 +10,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
-using UnityEngine.UI;
 
 namespace LimbusFramePacingFix;
 
@@ -37,17 +33,15 @@ public sealed class Plugin : BasePlugin
     internal static ConfigEntry<bool> PatchGameFrameRateMethods = null!;
     internal static ConfigEntry<bool> DumpMetadataOnLoad = null!;
 
-    private Harmony? harmony;
-
     public override void Load()
     {
         Log = base.Log;
         BindConfig();
 
-        harmony = new Harmony(GUID);
-        harmony.PatchAll(typeof(CanvasScaler_OnEnable_FramePacingPatch));
-        harmony.PatchAll(typeof(GlobalGameManager_SetFrameRateOnSceneLoaded_FramePacingPatch));
-        harmony.PatchAll(typeof(LocalGameOptionData_ApplyFrameRate_FramePacingPatch));
+        CanvasScalerFramePacingDetour.Install();
+        NativeUnitySettings.InstallSetterDetours();
+        GameFrameRateDetours.Install();
+        FramePacingEnforcer.Apply("Plugin.Load", forceLog: true);
         if (DumpMetadataOnLoad.Value)
             Il2CppFrameDiagnostics.DumpFrameRelatedMetadata();
         Log.LogInfo(
@@ -61,7 +55,7 @@ public sealed class Plugin : BasePlugin
 
     public override bool Unload()
     {
-        harmony?.UnpatchSelf();
+        CanvasScalerFramePacingDetour.Uninstall();
         GameFrameRateDetours.Uninstall();
         NativeUnitySettings.UninstallSetterDetours();
         return true;
@@ -211,6 +205,74 @@ internal static class FramePacingState
 {
     public static int ApplyLogCount;
     public static int DetourLogCount;
+}
+
+internal static class CanvasScalerFramePacingDetour
+{
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void OnEnableDelegate(IntPtr self, IntPtr methodInfo);
+
+    private static NativeDetour? detour;
+    private static OnEnableDelegate? original;
+    private static readonly OnEnableDelegate replacement = OnEnableReplacement;
+
+    public static void Install()
+    {
+        if (detour != null)
+            return;
+
+        var klass = IL2CPP.GetIl2CppClass("UnityEngine.UI.dll", "UnityEngine.UI", "CanvasScaler");
+        if (klass == IntPtr.Zero)
+        {
+            Plugin.Log.LogWarning("CanvasScaler.OnEnable frame pacing detour skipped: class was not resolved.");
+            return;
+        }
+
+        var method = IL2CPP.il2cpp_class_get_method_from_name(klass, "OnEnable", 0);
+        if (method == IntPtr.Zero)
+        {
+            Plugin.Log.LogWarning("CanvasScaler.OnEnable frame pacing detour skipped: method was not resolved.");
+            return;
+        }
+
+        var methodPointer = Marshal.ReadIntPtr(method);
+        if (methodPointer == IntPtr.Zero)
+        {
+            Plugin.Log.LogWarning("CanvasScaler.OnEnable frame pacing detour skipped: method pointer was null.");
+            return;
+        }
+
+        detour = new NativeDetour(methodPointer, replacement);
+        original = detour.GenerateTrampoline<OnEnableDelegate>();
+        detour.Apply();
+        Plugin.Log.LogInfo($"CanvasScaler.OnEnable frame pacing detour installed at {Ptr(methodPointer)}.");
+    }
+
+    public static void Uninstall()
+    {
+        try
+        {
+            detour?.Undo();
+            detour?.Free();
+        }
+        catch
+        {
+            // Unload can race Unity teardown.
+        }
+        finally
+        {
+            detour = null;
+            original = null;
+        }
+    }
+
+    private static void OnEnableReplacement(IntPtr self, IntPtr methodInfo)
+    {
+        original?.Invoke(self, methodInfo);
+        FramePacingEnforcer.ApplyThrottled("CanvasScaler.OnEnable");
+    }
+
+    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }
 
 internal static class NativeUnitySettings
@@ -800,37 +862,4 @@ internal static class NativeWindow
 
     [DllImport("user32.dll")]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-}
-
-[HarmonyPatch(typeof(CanvasScaler), "OnEnable")]
-internal static class CanvasScaler_OnEnable_FramePacingPatch
-{
-    public static void Postfix()
-    {
-        FramePacingEnforcer.ApplyThrottled("CanvasScaler.OnEnable");
-    }
-}
-
-[HarmonyPatch(typeof(GlobalGameManager), nameof(GlobalGameManager.SetFrameRateOnSceneLoaded))]
-internal static class GlobalGameManager_SetFrameRateOnSceneLoaded_FramePacingPatch
-{
-    public static void Postfix()
-    {
-        if (!Plugin.ShouldPatchGameFrameRateMethods)
-            return;
-
-        FramePacingEnforcer.Apply("GlobalGameManager.SetFrameRateOnSceneLoaded Harmony", forceLog: FramePacingState.ApplyLogCount < 8);
-    }
-}
-
-[HarmonyPatch(typeof(LocalGameOptionData), nameof(LocalGameOptionData.ApplyFrameRate))]
-internal static class LocalGameOptionData_ApplyFrameRate_FramePacingPatch
-{
-    public static void Postfix(bool __0)
-    {
-        if (!Plugin.ShouldPatchGameFrameRateMethods)
-            return;
-
-        FramePacingEnforcer.Apply($"LocalGameOptionData.ApplyFrameRate Harmony(isBattle={__0})", forceLog: FramePacingState.ApplyLogCount < 8);
-    }
 }

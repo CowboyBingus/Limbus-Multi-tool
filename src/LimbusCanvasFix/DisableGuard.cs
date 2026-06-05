@@ -1,7 +1,6 @@
 using System;
 using System.Reflection;
 using HarmonyLib;
-using UnityEngine;
 
 namespace LimbusCanvasFix
 {
@@ -16,7 +15,8 @@ namespace LimbusCanvasFix
             int patched = 0;
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                if (!asm.GetName().Name.Contains("JsonExtensions")) continue;
+                var assemblyName = asm.GetName().Name;
+                if (assemblyName == null || !assemblyName.Contains("JsonExtensions")) continue;
 
                 Type[] types;
                 try { types = asm.GetTypes(); }
@@ -68,44 +68,5 @@ namespace LimbusCanvasFix
             return false;
         }
 
-        [HarmonyPatch(typeof(Environment), nameof(Environment.Exit), typeof(int))]
-        [HarmonyPrefix]
-        private static bool PreventEnvironmentExit(int exitCode)
-        {
-            Plugin.Log.LogInfo($"[DISABLED] Environment.Exit({exitCode})");
-            return false;
-        }
-
-        [HarmonyPatch(typeof(Application), nameof(Application.Quit), new Type[] { })]
-        [HarmonyPrefix]
-        private static bool PreventApplicationQuit()
-        {
-            Plugin.Log.LogInfo("[DISABLED] Application.Quit()");
-            return false;
-        }
-
-        [HarmonyPatch(typeof(Application), nameof(Application.Quit), typeof(int))]
-        [HarmonyPrefix]
-        private static bool PreventApplicationQuit_Int(int exitCode)
-        {
-            Plugin.Log.LogInfo($"[DISABLED] Application.Quit({exitCode})");
-            return false;
-        }
-
-        [HarmonyPatch(typeof(Environment), nameof(Environment.FailFast), typeof(string), typeof(Exception))]
-        [HarmonyPrefix]
-        private static bool PreventFailFast_1(string message, Exception exception)
-        {
-            Plugin.Log.LogInfo($"[DISABLED] FailFast: {message}");
-            return false;
-        }
-
-        [HarmonyPatch(typeof(Environment), nameof(Environment.FailFast), typeof(string))]
-        [HarmonyPrefix]
-        private static bool PreventFailFast_2(string message)
-        {
-            Plugin.Log.LogInfo($"[DISABLED] FailFast: {message}");
-            return false;
-        }
     }
 }

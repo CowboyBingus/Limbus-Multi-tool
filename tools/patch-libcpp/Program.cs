@@ -249,6 +249,9 @@ public static class Program
             ("LibCpp2IL.BinaryStructures.Il2CppMethodSpec","get_GenericMethodParams",    0, 0),
             ("LibCpp2IL.Cpp2IlMethodRef",                 "get_TypeGenericParams",       0, 0),
             ("LibCpp2IL.Cpp2IlMethodRef",                 "get_MethodGenericParams",     0, 0),
+            ("LibCpp2IL.ClassReadingBinaryReader",         "ReadStringToNullNoLock",      1, 0),
+            ("LibCpp2IL.Metadata.Il2CppMetadata",          "ReadStringFromIndexNoReadLock", 1, 0),
+            ("LibCpp2IL.Metadata.Il2CppMetadata",          "GetStringFromIndex",          1, 0),
         };
 
         foreach (var (typeName, methodName, paramCount, maxDepth) in targets)
@@ -270,13 +273,250 @@ public static class Program
             }
         }
 
+        var metadataLookupTargets = new (string MethodName, int ParamCount)[]
+        {
+            ("GetTypeDefinitionFromIndex", 1),
+            ("GetMethodDefinitionFromIndex", 1),
+            ("GetParameterDefinitionFromIndex", 1),
+            ("GetFieldDefinitionFromIndex", 1),
+            ("GetGenericContainerFromIndex", 1),
+            ("GetGenericParameterFromIndex", 1),
+            ("GetFieldDefaultValueFromIndex", 1),
+            ("GetParameterDefaultValueFromIndex", 1),
+        };
+
+        var metadataType = module.GetType("LibCpp2IL.Metadata.Il2CppMetadata");
+        if (metadataType == null)
+        {
+            Console.WriteLine("WARN: Il2CppMetadata not found");
+        }
+        else
+        {
+            foreach (var (methodName, paramCount) in metadataLookupTargets)
+            {
+                var m = metadataType.Methods.FirstOrDefault(mm => mm.Name == methodName && mm.Parameters.Count == paramCount);
+                if (m == null) { Console.WriteLine($"WARN: Il2CppMetadata.{methodName}({paramCount} params) not found"); continue; }
+                Console.WriteLine($"Wrapping {metadataType.FullName}.{m.Name}() with constructed-object fallback");
+                WrapMethodInTryCatchWithNewObjectFallback(m);
+            }
+        }
+
         // ----- Targeted body replacements: methods whose IL contains uncatchable
         // failures (Debug.Assert / FailFast) that no try-catch wrapper can stop.
         ReplaceGetGenericParameterDef(module);
+        ReplaceRawArrayReader(module, "ReadClassArrayAtRawAddr", readableArray: false);
+        ReplaceRawArrayReader(module, "ReadReadableArrayAtRawAddr", readableArray: true);
+        ReplaceFillReadableArrayHereNoLock(module);
 
         // Save back
         asm.Write(dll);
         Console.WriteLine($"Patched: {dll}");
+    }
+
+    static void ReplaceRawArrayReader(ModuleDefinition module, string methodName, bool readableArray)
+    {
+        var t = module.GetType("LibCpp2IL.ClassReadingBinaryReader");
+        if (t == null) { Console.WriteLine("WARN: ClassReadingBinaryReader not found"); return; }
+        var m = t.Methods.FirstOrDefault(mm => mm.Name == methodName && mm.Parameters.Count == 2 && mm.HasGenericParameters);
+        if (m == null) { Console.WriteLine($"WARN: {methodName} not found"); return; }
+
+        Console.WriteLine($"Replacing body of {t.FullName}.{m.Name}<T>() with safe sparse-reader wrapper");
+
+        var genericT = m.GenericParameters[0];
+        var getLock = t.Methods.First(mm => mm.Name == "GetLockOrThrow" && mm.Parameters.Count == 0);
+        var releaseLock = t.Methods.First(mm => mm.Name == "ReleaseLock" && mm.Parameters.Count == 0);
+        var setPosition = t.Methods.First(mm => mm.Name == "set_Position" && mm.Parameters.Count == 1);
+        var exceptionType = module.ImportReference(typeof(Exception));
+
+        MethodReference readMethod;
+        if (readableArray)
+        {
+            var fill = t.Methods.First(mm => mm.Name == "FillReadableArrayHereNoLock" && mm.Parameters.Count == 2);
+            var gim = new GenericInstanceMethod(fill);
+            gim.GenericArguments.Add(genericT);
+            readMethod = gim;
+        }
+        else
+        {
+            var read = t.Methods.First(mm => mm.Name == "InternalReadClass" && mm.Parameters.Count == 1);
+            var gim = new GenericInstanceMethod(read);
+            gim.GenericArguments.Add(genericT);
+            readMethod = gim;
+        }
+
+        var body = new MethodBody(m) { InitLocals = true };
+        m.Body = body;
+        var arrLocal = new VariableDefinition(new ArrayType(genericT));
+        var iLocal = new VariableDefinition(module.TypeSystem.Int32);
+        var retLocal = new VariableDefinition(new ArrayType(genericT));
+        body.Variables.Add(arrLocal);
+        body.Variables.Add(iLocal);
+        body.Variables.Add(retLocal);
+        var il = body.GetILProcessor();
+
+        var outerTryStart = il.Create(OpCodes.Ldarg_2);
+        var catchStart = il.Create(OpCodes.Pop);
+        var returnStart = il.Create(OpCodes.Ldloc, retLocal);
+        var innerTryStart = il.Create(OpCodes.Ldarg_0);
+        var loopCheck = il.Create(OpCodes.Ldloc, iLocal);
+        var loopBody = il.Create(OpCodes.Ldloc, arrLocal);
+        var afterLoop = il.Create(OpCodes.Ldloc, arrLocal);
+        var afterSeek = readableArray ? il.Create(OpCodes.Nop) : loopCheck;
+        var finallyStart = il.Create(OpCodes.Ldarg_0);
+
+        il.Append(outerTryStart);
+        il.Append(il.Create(OpCodes.Conv_Ovf_I));
+        il.Append(il.Create(OpCodes.Newarr, genericT));
+        il.Append(il.Create(OpCodes.Stloc, arrLocal));
+
+        il.Append(innerTryStart);
+        il.Append(il.Create(OpCodes.Call, getLock));
+        il.Append(il.Create(OpCodes.Ldarg_1));
+        il.Append(il.Create(OpCodes.Ldc_I4_M1));
+        il.Append(il.Create(OpCodes.Conv_I8));
+        il.Append(il.Create(OpCodes.Beq_S, afterSeek));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldarg_1));
+        il.Append(il.Create(OpCodes.Call, setPosition));
+        il.Append(il.Create(OpCodes.Ldc_I4_0));
+        il.Append(il.Create(OpCodes.Stloc, iLocal));
+
+        if (readableArray)
+        {
+            il.Append(afterSeek);
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Ldloc, arrLocal));
+            il.Append(il.Create(OpCodes.Ldc_I4_0));
+            il.Append(il.Create(OpCodes.Call, readMethod));
+            il.Append(il.Create(OpCodes.Ldloc, arrLocal));
+            il.Append(il.Create(OpCodes.Stloc, retLocal));
+            il.Append(il.Create(OpCodes.Leave, returnStart));
+        }
+        else
+        {
+            il.Append(il.Create(OpCodes.Br_S, loopCheck));
+            il.Append(loopBody);
+            il.Append(il.Create(OpCodes.Ldloc, iLocal));
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Ldc_I4_0));
+            il.Append(il.Create(OpCodes.Call, readMethod));
+            il.Append(il.Create(OpCodes.Stelem_Any, genericT));
+            il.Append(il.Create(OpCodes.Ldloc, iLocal));
+            il.Append(il.Create(OpCodes.Ldc_I4_1));
+            il.Append(il.Create(OpCodes.Add));
+            il.Append(il.Create(OpCodes.Stloc, iLocal));
+            il.Append(loopCheck);
+            il.Append(il.Create(OpCodes.Conv_I8));
+            il.Append(il.Create(OpCodes.Ldarg_2));
+            il.Append(il.Create(OpCodes.Blt_S, loopBody));
+            il.Append(afterLoop);
+            il.Append(il.Create(OpCodes.Stloc, retLocal));
+            il.Append(il.Create(OpCodes.Leave, returnStart));
+        }
+
+        il.Append(finallyStart);
+        il.Append(il.Create(OpCodes.Call, releaseLock));
+        il.Append(il.Create(OpCodes.Endfinally));
+
+        il.Append(catchStart);
+        il.Append(il.Create(OpCodes.Ldc_I4_0));
+        il.Append(il.Create(OpCodes.Newarr, genericT));
+        il.Append(il.Create(OpCodes.Stloc, retLocal));
+        il.Append(il.Create(OpCodes.Leave, returnStart));
+
+        il.Append(returnStart);
+        il.Append(il.Create(OpCodes.Ret));
+
+        body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Finally)
+        {
+            TryStart = innerTryStart,
+            TryEnd = finallyStart,
+            HandlerStart = finallyStart,
+            HandlerEnd = catchStart,
+        });
+        body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Catch)
+        {
+            TryStart = outerTryStart,
+            TryEnd = catchStart,
+            HandlerStart = catchStart,
+            HandlerEnd = returnStart,
+            CatchType = exceptionType,
+        });
+        body.MaxStackSize = 0;
+    }
+
+    static void ReplaceFillReadableArrayHereNoLock(ModuleDefinition module)
+    {
+        var t = module.GetType("LibCpp2IL.ClassReadingBinaryReader");
+        if (t == null) { Console.WriteLine("WARN: ClassReadingBinaryReader not found"); return; }
+        var m = t.Methods.FirstOrDefault(mm => mm.Name == "FillReadableArrayHereNoLock" && mm.Parameters.Count == 2 && mm.HasGenericParameters);
+        if (m == null) { Console.WriteLine("WARN: FillReadableArrayHereNoLock not found"); return; }
+
+        Console.WriteLine($"Replacing body of {t.FullName}.{m.Name}<T>() with safe per-entry reader");
+
+        var genericT = m.GenericParameters[0];
+        var internalRead = t.Methods.FirstOrDefault(mm => mm.Name == "InternalReadReadableClass" && mm.Parameters.Count == 0 && mm.HasGenericParameters);
+        if (internalRead == null) { Console.WriteLine("WARN: InternalReadReadableClass<T>() not found"); return; }
+
+        var gim = new GenericInstanceMethod(internalRead);
+        gim.GenericArguments.Add(genericT);
+        var activatorCreate = typeof(Activator).GetMethods()
+            .First(mi => mi.Name == nameof(Activator.CreateInstance) && mi.IsGenericMethodDefinition && mi.GetParameters().Length == 0);
+        var createDefault = new GenericInstanceMethod(module.ImportReference(activatorCreate));
+        createDefault.GenericArguments.Add(genericT);
+
+        var body = new MethodBody(m) { InitLocals = true };
+        m.Body = body;
+        var iLocal = new VariableDefinition(module.TypeSystem.Int32);
+        body.Variables.Add(iLocal);
+        var il = body.GetILProcessor();
+
+        var loopCheck = il.Create(OpCodes.Ldloc, iLocal);
+        var loopBody = il.Create(OpCodes.Ldarg_1);
+        var catchStart = il.Create(OpCodes.Pop);
+        var increment = il.Create(OpCodes.Ldloc, iLocal);
+        var ret = il.Create(OpCodes.Ret);
+
+        il.Append(il.Create(OpCodes.Ldarg_2));
+        il.Append(il.Create(OpCodes.Stloc, iLocal));
+        il.Append(il.Create(OpCodes.Br, loopCheck));
+
+        il.Append(loopBody);
+        il.Append(il.Create(OpCodes.Ldloc, iLocal));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Call, gim));
+        il.Append(il.Create(OpCodes.Stelem_Any, genericT));
+        il.Append(il.Create(OpCodes.Leave, increment));
+
+        il.Append(catchStart);
+        il.Append(il.Create(OpCodes.Ldarg_1));
+        il.Append(il.Create(OpCodes.Ldloc, iLocal));
+        il.Append(il.Create(OpCodes.Call, createDefault));
+        il.Append(il.Create(OpCodes.Stelem_Any, genericT));
+        il.Append(il.Create(OpCodes.Leave, increment));
+
+        il.Append(increment);
+        il.Append(il.Create(OpCodes.Ldc_I4_1));
+        il.Append(il.Create(OpCodes.Add));
+        il.Append(il.Create(OpCodes.Stloc, iLocal));
+
+        il.Append(loopCheck);
+        il.Append(il.Create(OpCodes.Ldarg_1));
+        il.Append(il.Create(OpCodes.Ldlen));
+        il.Append(il.Create(OpCodes.Conv_I4));
+        il.Append(il.Create(OpCodes.Blt, loopBody));
+
+        il.Append(ret);
+
+        body.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Catch)
+        {
+            TryStart = loopBody,
+            TryEnd = catchStart,
+            HandlerStart = catchStart,
+            HandlerEnd = increment,
+            CatchType = module.ImportReference(typeof(Exception)),
+        });
+        body.MaxStackSize = 0;
     }
 
     // Replace LibCpp2IL.BinaryStructures.Il2CppType.GetGenericParameterDef body.
@@ -479,6 +719,11 @@ public static class Program
             il.Append(il.Create(OpCodes.Newarr, elementType));
             il.Append(il.Create(OpCodes.Stloc, retLocal));
         }
+        else if (retType.FullName == "System.String")
+        {
+            il.Append(il.Create(OpCodes.Ldstr, string.Empty));
+            il.Append(il.Create(OpCodes.Stloc, retLocal));
+        }
         // else: retLocal already initialized to default(T) by the CLR (InitLocals=true).
     }
 
@@ -549,6 +794,55 @@ public static class Program
             HandlerStart = catchPop,
             HandlerEnd   = returnFinal,
             CatchType    = exceptionType,
+        });
+        newBody.MaxStackSize = 0;
+    }
+
+    static void WrapMethodInTryCatchWithNewObjectFallback(MethodDefinition method)
+    {
+        var module = method.Module;
+        var retType = method.ReturnType;
+        var resolvedRet = retType.Resolve();
+        var ctor = resolvedRet?.Methods.FirstOrDefault(m => m.IsConstructor && !m.IsStatic && m.Parameters.Count == 0);
+        if (ctor == null)
+        {
+            Console.WriteLine($"WARN: {retType.FullName} has no parameterless constructor; using default fallback");
+            WrapMethodInTryCatch(method);
+            return;
+        }
+
+        var exceptionType = module.ImportReference(typeof(Exception));
+        var ctorRef = module.ImportReference(ctor);
+        var innerMethod = ExtractInnerMethod(method);
+
+        var newBody = new MethodBody(method) { InitLocals = true };
+        method.Body = newBody;
+        var retLocal = new VariableDefinition(retType);
+        newBody.Variables.Add(retLocal);
+        var il = newBody.GetILProcessor();
+
+        var tryStart = AppendArgLoads(il, method);
+        il.Append(il.Create(OpCodes.Call, innerMethod));
+        il.Append(il.Create(OpCodes.Stloc, retLocal));
+        var returnFinal = il.Create(OpCodes.Ldloc, retLocal);
+        il.Append(il.Create(OpCodes.Leave, returnFinal));
+
+        var catchPop = il.Create(OpCodes.Pop);
+        il.Append(catchPop);
+        il.Append(il.Create(OpCodes.Newobj, ctorRef));
+        il.Append(il.Create(OpCodes.Stloc, retLocal));
+        il.Append(il.Create(OpCodes.Leave, returnFinal));
+
+        il.Append(returnFinal);
+        il.Append(il.Create(OpCodes.Ret));
+
+        newBody.ExceptionHandlers.Add(new ExceptionHandler(ExceptionHandlerType.Catch)
+        {
+            TryStart = tryStart,
+            TryEnd = catchPop,
+            HandlerStart = catchPop,
+            HandlerEnd = returnFinal,
+            CatchType = exceptionType,
         });
         newBody.MaxStackSize = 0;
     }

@@ -20,12 +20,19 @@ if (!(Test-Path -LiteralPath $ArtifactPath)) {
 
 $tag = if ($Version.StartsWith('v')) { $Version } else { "v$Version" }
 
+function Invoke-Checked([string]$Description, [scriptblock]$Command) {
+    & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Description failed with exit code $LASTEXITCODE."
+    }
+}
+
 git tag $tag 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Tag $tag already exists locally."
 }
 
-git push origin $tag
+Invoke-Checked "Pushing tag $tag" { git push origin $tag }
 
 $ghArgs = @(
     'release', 'create', $tag,
@@ -37,4 +44,4 @@ $ghArgs = @(
 if ($Draft) { $ghArgs += '--draft' }
 if ($Prerelease) { $ghArgs += '--prerelease' }
 
-& gh @ghArgs
+Invoke-Checked "Creating GitHub release $tag" { & gh @ghArgs }

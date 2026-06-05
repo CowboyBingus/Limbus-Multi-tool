@@ -8,7 +8,6 @@
     <GameDir>C:\Program Files (x86)\Steam\steamapps\common\Limbus Company</GameDir>
     <BepInExDir>$(GameDir)\BepInEx</BepInExDir>
     <CoreDir>$(BepInExDir)\core</CoreDir>
-    <InteropDir>$(BepInExDir)\interop</InteropDir>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
@@ -17,7 +16,6 @@
 
   <ItemGroup>
     <Compile Include="Plugin.cs" />
-    <Compile Include="GameWrappers.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -29,22 +27,12 @@
       <HintPath>$(CoreDir)\BepInEx.Unity.IL2CPP.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="0Harmony">
-      <HintPath>$(CoreDir)\0Harmony.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
     <Reference Include="Il2CppInterop.Runtime">
       <HintPath>$(CoreDir)\Il2CppInterop.Runtime.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="MonoMod.RuntimeDetour">
       <HintPath>$(CoreDir)\MonoMod.RuntimeDetour.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-  </ItemGroup>
-
-  <ItemGroup>
-    <Reference Include="$([System.IO.Directory]::GetFiles('$(InteropDir)', '*.dll'))">
       <Private>false</Private>
     </Reference>
   </ItemGroup>

@@ -11,8 +11,15 @@ $distDir = Join-Path $installerDir 'dist\Limbus Multi-tool'
 $artifactDir = Join-Path $repoRoot 'artifacts'
 $zipPath = Join-Path $artifactDir "Limbus-Multi-tool-$Version-win-x64.zip"
 
+function Invoke-Checked([string]$Description, [scriptblock]$Command) {
+    & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Description failed with exit code $LASTEXITCODE."
+    }
+}
+
 if (!$SkipInstallerBuild) {
-    & (Join-Path $installerDir 'build_exe.ps1') -Version $Version
+    Invoke-Checked 'Building installer' { & (Join-Path $installerDir 'build_exe.ps1') -Version $Version }
 }
 
 if (!(Test-Path -LiteralPath $distDir)) {

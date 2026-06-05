@@ -8,7 +8,6 @@
     <GameDir>C:\Program Files (x86)\Steam\steamapps\common\Limbus Company</GameDir>
     <BepInExDir>$(GameDir)\BepInEx</BepInExDir>
     <CoreDir>$(BepInExDir)\core</CoreDir>
-    <InteropDir>$(BepInExDir)\interop</InteropDir>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
@@ -41,10 +40,8 @@
       <HintPath>$(CoreDir)\Il2CppInterop.Runtime.dll</HintPath>
       <Private>false</Private>
     </Reference>
-  </ItemGroup>
-
-  <ItemGroup>
-    <Reference Include="$([System.IO.Directory]::GetFiles('$(InteropDir)', '*.dll'))">
+    <Reference Include="MonoMod.RuntimeDetour">
+      <HintPath>$(CoreDir)\MonoMod.RuntimeDetour.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

@@ -4,7 +4,7 @@ param(
     [string]$Action,
 
     [string]$GameDir,
-    [string]$PayloadRoot = (Join-Path $PSScriptRoot 'payload'),
+    [string]$PayloadRoot,
     [string]$Plugins = 'canvas,resize,framepacing',
     [string]$UpdateUrl,
     [string]$AppDir,
@@ -14,6 +14,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ScriptRoot = if (![string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+    $PSScriptRoot
+} elseif ($MyInvocation.MyCommand.Path) {
+    Split-Path -Parent $MyInvocation.MyCommand.Path
+} else {
+    Get-Location
+}
+if ([string]::IsNullOrWhiteSpace($PayloadRoot)) {
+    $PayloadRoot = Join-Path $ScriptRoot 'payload'
+}
 $BepInExBuildPage = 'https://builds.bepinex.dev/projects/bepinex_be'
 $BepInExFallbackUrl = 'https://builds.bepinex.dev/projects/bepinex_be/755/BepInEx-Unity.IL2CPP-win-x64-6.0.0-be.755%2B3fab71a.zip'
 
@@ -134,12 +144,46 @@ function Test-InteropReady([string]$Path) {
     return $true
 }
 
+function Get-ConfigValue([string]$Path, [string]$Name) {
+    if (!(Test-Path -LiteralPath $Path)) {
+        return $null
+    }
+
+    $pattern = "^\s*$([regex]::Escape($Name))\s*=\s*(.*?)\s*$"
+    foreach ($line in (Get-Content -LiteralPath $Path)) {
+        if ($line -match $pattern) {
+            return $matches[1].Trim()
+        }
+    }
+
+    return $null
+}
+
+function Require-ConfigValue([string]$Path, [string]$Name, [string]$Expected) {
+    $actual = Get-ConfigValue $Path $Name
+    if ($null -eq $actual) {
+        Fail "BepInEx config value missing: $Name in $Path"
+    }
+    if ($actual -ne $Expected) {
+        Fail "BepInEx config value $Name expected '$Expected' but found '$actual'."
+    }
+}
+
+function Get-FileSha256([string]$Path) {
+    if (!(Test-Path -LiteralPath $Path)) {
+        return $null
+    }
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToUpperInvariant()
+}
+
 function Require-InstallPayload {
     $required = @(
         @('scripts\reapply-limbus-fix.ps1', 'reapply script'),
         @('scripts\rebuild-resources.ps1', 'resource rebuild script'),
         @('data\il2cpp-api-functions-unity6000-no-profiler.txt', 'bundled IL2CPP API list'),
         @('data\System.JsonExtensions.dll-resources.dat.template', 'metadata resource template'),
+        @('native\winhttp.dll', 'Limbus winhttp shim'),
+        @('native\doorstop.dll', 'Doorstop loader DLL'),
         @('bin\Release\LimbusCanvasFix.dll', 'LimbusCanvasFix payload'),
         @('bin\Release\LimbusWindowResizeFix.dll', 'LimbusWindowResizeFix payload'),
         @('bin\Release\LimbusFramePacingFix.dll', 'LimbusFramePacingFix payload'),
@@ -158,55 +202,210 @@ function Require-InstallPayload {
 
 function Invoke-Reapply([switch]$EnableInteropGeneration) {
     $script = Join-Path $PayloadRoot 'scripts\reapply-limbus-fix.ps1'
-    $args = @('-GameDir', $GameDir, '-RepoDir', $PayloadRoot, '-SkipBuild')
+    $reapplyArgs = @(
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        $script,
+        '-GameDir',
+        $GameDir,
+        '-RepoDir',
+        $PayloadRoot,
+        '-SkipBuild'
+    )
     if ($EnableInteropGeneration) {
-        $args += '-EnableInteropGeneration'
+        $reapplyArgs += '-EnableInteropGeneration'
     }
 
-    & $script @args
+    Info "Running compatibility reapply script for $GameDir."
+    & powershell.exe @reapplyArgs
     if ($LASTEXITCODE) {
         Fail "Install script failed with exit code $LASTEXITCODE."
     }
 }
 
+function Test-PathChangedSince([string]$Path, [datetime]$StartUtc) {
+    if (!(Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+    return ((Get-Item -LiteralPath $Path).LastWriteTimeUtc -ge $StartUtc.AddSeconds(-1))
+}
+
+function Get-DoorstopFatalMessage([long]$StartLength) {
+    $logPath = Join-Path $GameDir 'doorstop_proxy.log'
+    if (!(Test-Path -LiteralPath $logPath)) {
+        return $null
+    }
+
+    $stream = $null
+    $reader = $null
+    try {
+        $stream = [System.IO.File]::Open($logPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        if ($stream.Length -le $StartLength) {
+            return $null
+        }
+        if ($StartLength -gt 0 -and $StartLength -lt $stream.Length) {
+            [void]$stream.Seek($StartLength, [System.IO.SeekOrigin]::Begin)
+        }
+        $reader = New-Object System.IO.StreamReader($stream)
+        $fatal = $reader.ReadToEnd().Split("`n") |
+            ForEach-Object { $_.TrimEnd("`r") } |
+            Where-Object { $_ -match 'FATAL:' } |
+            Select-Object -Last 1
+    } catch [System.IO.IOException] {
+        return $null
+    } finally {
+        if ($reader) { $reader.Dispose() }
+        elseif ($stream) { $stream.Dispose() }
+    }
+
+    if ($fatal) {
+        return $fatal
+    }
+
+    return $null
+}
+
+function Test-BepInExStarted([datetime]$StartUtc) {
+    if (Test-PathChangedSince (Join-Path $GameDir 'BepInEx\LogOutput.log') $StartUtc) {
+        return $true
+    }
+    if (Test-PathChangedSince (Join-Path $GameDir 'BepInEx\ErrorLog.log') $StartUtc) {
+        return $true
+    }
+    $interopDir = Join-Path $GameDir 'BepInEx\interop'
+    if (Test-PathChangedSince $interopDir $StartUtc) {
+        return $true
+    }
+    if (Test-Path -LiteralPath $interopDir) {
+        $generated = Get-ChildItem -LiteralPath $interopDir -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTimeUtc -ge $StartUtc.AddSeconds(-1) } |
+            Select-Object -First 1
+        if ($generated) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-InteropFileCount {
+    $interopDir = Join-Path $GameDir 'BepInEx\interop'
+    if (!(Test-Path -LiteralPath $interopDir)) {
+        return 0
+    }
+    return @((Get-ChildItem -LiteralPath $interopDir -File -ErrorAction SilentlyContinue)).Count
+}
+
 function Start-GameForInteropGeneration {
     Info "Launching Limbus Company once to generate BepInEx interop assemblies."
+    $startUtc = (Get-Date).ToUniversalTime()
+    $doorstopLog = Join-Path $GameDir 'doorstop_proxy.log'
+    $doorstopStartLength = 0
+    if (Test-Path -LiteralPath $doorstopLog) {
+        $doorstopStartLength = (Get-Item -LiteralPath $doorstopLog).Length
+    }
     $process = Start-Process -FilePath (Join-Path $GameDir 'LimbusCompany.exe') -WorkingDirectory $GameDir -PassThru
-    Info "Waiting up to 5 minutes for BepInEx interop generation."
+    Info "Checking that BepInEx starts."
 
-    $deadline = (Get-Date).AddMinutes(5)
-    $readySince = $null
+    $startupDeadline = (Get-Date).AddSeconds(25)
+    $bepInExStarted = $false
+    while ((Get-Date) -lt $startupDeadline) {
+        $fatal = Get-DoorstopFatalMessage $doorstopStartLength
+        if ($fatal) {
+            Fail "Doorstop failed before BepInEx started: $fatal"
+        }
+
+        if (Test-BepInExStarted $startUtc) {
+            $bepInExStarted = $true
+            Info "Detected BepInEx startup."
+            break
+        }
+
+        $running = Get-Process -Name LimbusCompany -ErrorAction SilentlyContinue
+        if (!$running -and ((Get-Date).ToUniversalTime() - $startUtc).TotalSeconds -ge 5) {
+            Fail "LimbusCompany exited before BepInEx started. Check doorstop_proxy.log in the game folder."
+        }
+
+        Start-Sleep -Milliseconds 500
+    }
+
+    if (!$bepInExStarted) {
+        Fail "BepInEx did not start within 25 seconds. Check doorstop_proxy.log in the game folder."
+    }
+
+    Info "Waiting for BepInEx interop generation."
+    $deadline = (Get-Date).AddMinutes(3)
+    $lastCount = Get-InteropFileCount
+    $lastProgress = Get-Date
     while ((Get-Date) -lt $deadline) {
+        $fatal = Get-DoorstopFatalMessage $doorstopStartLength
+        if ($fatal) {
+            Fail "Doorstop failed during interop generation: $fatal"
+        }
+
         if (Test-InteropReady $GameDir) {
-            if ($null -eq $readySince) {
-                $readySince = Get-Date
-                Info "Detected generated interop assemblies; waiting for writes to settle."
-            } elseif (((Get-Date) - $readySince).TotalSeconds -ge 5) {
+            Start-Sleep -Seconds 2
+            if (Test-InteropReady $GameDir) {
                 Info "BepInEx interop assemblies generated."
                 return
             }
-        } else {
-            $readySince = $null
         }
 
-        try {
-            if ($process.HasExited) {
-                Warn "LimbusCompany exited before interop generation completed."
-                break
-            }
-        } catch {
-            Warn "Could not inspect launched game process: $($_.Exception.Message)"
+        $count = Get-InteropFileCount
+        if ($count -ne $lastCount) {
+            $lastCount = $count
+            $lastProgress = Get-Date
         }
 
-        Start-Sleep -Seconds 2
+        $running = Get-Process -Name LimbusCompany -ErrorAction SilentlyContinue
+        if (!$running -and ((Get-Date) - $lastProgress).TotalSeconds -ge 5) {
+            Fail "LimbusCompany exited before BepInEx interop generation completed."
+        }
+
+        Start-Sleep -Seconds 1
     }
 
-    if (Test-InteropReady $GameDir) {
-        Info "BepInEx interop assemblies generated."
-        return
+    Fail "BepInEx interop generation did not complete within 3 minutes."
+}
+
+function Assert-InstalledState([string[]]$Selected) {
+    if (!(Test-BepInExInstalled $GameDir)) {
+        Fail "Post-install validation failed: BepInEx Unity IL2CPP files are incomplete."
+    }
+    if ((Get-FileSha256 (Join-Path $PayloadRoot 'native\winhttp.dll')) -ne (Get-FileSha256 (Join-Path $GameDir 'winhttp.dll'))) {
+        Fail "Post-install validation failed: Limbus winhttp shim is not installed."
+    }
+    if ((Get-FileSha256 (Join-Path $PayloadRoot 'native\doorstop.dll')) -ne (Get-FileSha256 (Join-Path $GameDir 'BepInEx\doorstop\doorstop.dll'))) {
+        Fail "Post-install validation failed: Doorstop loader DLL is not installed."
+    }
+    $configPath = Join-Path $GameDir 'BepInEx\config\BepInEx.cfg'
+    Require-ConfigValue $configPath 'EnableAssemblyCache' 'false'
+    Require-ConfigValue $configPath 'UpdateInteropAssemblies' 'false'
+    Require-ConfigValue $configPath 'PreloadIL2CPPInteropAssemblies' 'false'
+    Require-ConfigValue $configPath 'GlobalMetadataPath' '{GameDataPath}/il2cpp_data/Resources/System.JsonExtensions.dll-resources.dat'
+    Require-ConfigValue $configPath 'UnityLogListening' 'false'
+    Require-File (Join-Path $GameDir 'BepInEx\interop\assembly-hash.txt') 'BepInEx interop hash marker'
+    Require-File (Join-Path $GameDir 'BepInEx\interop\UnityEngine.CoreModule.dll') 'UnityEngine.CoreModule base library'
+
+    $pluginDir = Get-PluginDir $GameDir
+    $pluginMap = @{
+        canvas = 'LimbusCanvasFix.dll'
+        resize = 'LimbusWindowResizeFix.dll'
+        framepacing = 'LimbusFramePacingFix.dll'
     }
 
-    Fail "BepInEx interop generation did not complete. Launch the game once, wait for the main menu, close it, and run install again."
+    foreach ($key in $pluginMap.Keys) {
+        $path = Join-Path $pluginDir $pluginMap[$key]
+        if ($Selected -contains $key) {
+            Require-File $path "$($pluginMap[$key]) plugin"
+        } elseif (Test-Path -LiteralPath $path) {
+            Fail "Post-install validation failed: unselected plugin remains installed: $($pluginMap[$key])"
+        }
+    }
+
+    Info "Post-install validation passed."
 }
 
 function Get-BepInExDownloadUrl {
@@ -256,6 +455,39 @@ function Ensure-BepInEx {
     Info "BepInEx install complete."
 }
 
+function Install-WinHttpShim {
+    $shim = Join-Path $PayloadRoot 'native\winhttp.dll'
+    $doorstop = Join-Path $PayloadRoot 'native\doorstop.dll'
+    $dest = Join-Path $GameDir 'winhttp.dll'
+    $doorstopDir = Join-Path $GameDir 'BepInEx\doorstop'
+    $doorstopDest = Join-Path $doorstopDir 'doorstop.dll'
+    Require-File $shim 'Limbus winhttp shim'
+    Require-File $doorstop 'Doorstop loader DLL'
+
+    $shimHash = Get-FileSha256 $shim
+    $destHash = Get-FileSha256 $dest
+    $doorstopHash = Get-FileSha256 $doorstop
+    $doorstopDestHash = Get-FileSha256 $doorstopDest
+    if ($null -ne $destHash -and $destHash -eq $shimHash -and $null -ne $doorstopDestHash -and $doorstopDestHash -eq $doorstopHash) {
+        Info "Limbus winhttp shim already installed."
+        return
+    }
+
+    if (!(Test-Path -LiteralPath $doorstopDir)) {
+        New-Item -ItemType Directory -Path $doorstopDir -Force | Out-Null
+    }
+
+    if (Test-Path -LiteralPath $dest) {
+        $backupName = 'winhttp.dll.pre-limbus-shim-{0}.bak' -f (Get-Date -Format 'yyyyMMdd-HHmmss')
+        Copy-Item -LiteralPath $dest -Destination (Join-Path $GameDir $backupName) -Force
+        Info "Backed up existing winhttp.dll to $backupName."
+    }
+
+    Copy-Item -LiteralPath $shim -Destination $dest -Force
+    Copy-Item -LiteralPath $doorstop -Destination $doorstopDest -Force
+    Info "Installed Limbus winhttp shim and Doorstop loader."
+}
+
 function Get-SelectedPlugins {
     $selected = @()
     foreach ($raw in ($Plugins -split ',')) {
@@ -295,23 +527,20 @@ function Sync-SelectedPlugins([string[]]$Selected) {
 }
 
 function Invoke-Install {
+    Info "Using game folder: $GameDir"
+    Info "Using payload folder: $PayloadRoot"
     Require-GameFiles $GameDir
     Require-InstallPayload
 
     $selected = Get-SelectedPlugins
     Ensure-BepInEx
+    Install-WinHttpShim
     Stop-GameIfRunning -Required
     Info "Applying core compatibility patch and deploying plugins."
-    Invoke-Reapply -EnableInteropGeneration
-
-    if (!(Test-InteropReady $GameDir)) {
-        Start-GameForInteropGeneration
-        Stop-GameIfRunning -Required
-        Info "Patching generated BepInEx interop assemblies."
-        Invoke-Reapply
-    }
+    Invoke-Reapply
 
     Sync-SelectedPlugins -Selected $selected
+    Assert-InstalledState -Selected $selected
     Info "Install/reapply complete."
 }
 
@@ -326,19 +555,19 @@ function Invoke-Verify {
     Require-File $logPath 'BepInEx log'
     $log = Get-Content -LiteralPath $logPath -Raw
 
-    if ($log -match 'Applied CanvasScaler ultrawide fix') {
+    if ($log -match 'Applied CanvasScaler ultrawide fix' -or $log -match 'CanvasScaler\.OnEnable detour installed') {
         Info "Ultrawide CanvasScaler fix verified in log."
     } else {
         Warn "Ultrawide fix marker not found yet. Launch the game and wait for the main UI."
     }
 
-    if ($log -match 'Enabled resizing for HWND' -or $log -match 'Window resize fix active') {
+    if ($log -match 'Enabled resizing for HWND' -or $log -match 'Window resize fix active' -or $log -match 'LimbusWindowResizeFix ready') {
         Info "Window resize fix verified in log."
     } else {
         Warn "Window resize marker not found yet. Launch the game and wait for the window to appear."
     }
 
-    if ($log -match 'Frame pacing apply') {
+    if ($log -match 'Frame pacing apply' -or $log -match 'LimbusFramePacingFix .* loaded') {
         Info "FPS/frame pacing fix verified in log."
     } else {
         Warn "FPS/frame pacing marker not found yet. Launch the game and wait for scene loading to complete."

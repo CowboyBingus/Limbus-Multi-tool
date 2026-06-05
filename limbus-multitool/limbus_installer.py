@@ -58,6 +58,8 @@ REQUIRED_PAYLOAD_FILES = (
     ("scripts", "rebuild-resources.ps1"),
     ("data", "il2cpp-api-functions-unity6000-no-profiler.txt"),
     ("data", "System.JsonExtensions.dll-resources.dat.template"),
+    ("native", "winhttp.dll"),
+    ("native", "doorstop.dll"),
     ("bin", "Release", "LimbusCanvasFix.dll"),
     ("bin", "Release", "LimbusWindowResizeFix.dll"),
     ("bin", "Release", "LimbusFramePacingFix.dll"),

@@ -3,11 +3,11 @@ using BepInEx.Unity.IL2CPP;
 using BepInEx.Logging;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
+using MonoMod.RuntimeDetour;
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using UnityEngine;
-using UnityEngine.UI;
+using System.Runtime.InteropServices;
 
 namespace LimbusCanvasFix
 {
@@ -30,15 +30,27 @@ namespace LimbusCanvasFix
             Log.LogInfo($"{NAME} ready.");
         }
 
+        public override bool Unload()
+        {
+            CanvasScalerOnEnableDetour.Uninstall();
+            return true;
+        }
+
         private static void ApplyPatches()
         {
             try
             {
                 LogKnownIl2CppImages();
-                var harmony = new Harmony(GUID);
-                harmony.PatchAll(typeof(Plugin).Assembly);
-                DisableGuard.StubGuardAssembly(harmony);
-                Log.LogInfo("Harmony patches applied.");
+                CanvasScalerOnEnableDetour.Install();
+                try
+                {
+                    DisableGuard.StubGuardAssembly(new Harmony(GUID));
+                }
+                catch (Exception ex)
+                {
+                    Log.LogDebug($"Guard stub pass skipped: {ex.Message}");
+                }
+                Log.LogInfo("Runtime patches applied.");
             }
             catch (Exception ex)
             {
@@ -68,17 +80,75 @@ namespace LimbusCanvasFix
             }
         }
 
-        internal static void Apply(CanvasScaler scaler)
-        {
-            NativeCanvasScaler.Apply(scaler);
-        }
+        internal static void Apply(IntPtr scaler) => NativeCanvasScaler.Apply(scaler);
     }
 
-    [HarmonyPatch(typeof(CanvasScaler), "OnEnable")]
-    internal static class CanvasScaler_OnEnable_Patch
+    internal static class CanvasScalerOnEnableDetour
     {
-        [HarmonyPostfix]
-        public static void Postfix(CanvasScaler __instance) => Plugin.Apply(__instance);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void OnEnableDelegate(IntPtr self, IntPtr methodInfo);
+
+        private static NativeDetour? detour;
+        private static OnEnableDelegate? original;
+        private static readonly OnEnableDelegate replacement = OnEnableReplacement;
+
+        public static void Install()
+        {
+            if (detour != null)
+                return;
+
+            var klass = IL2CPP.GetIl2CppClass("UnityEngine.UI.dll", "UnityEngine.UI", "CanvasScaler");
+            if (klass == IntPtr.Zero)
+            {
+                Plugin.Log.LogWarning("CanvasScaler.OnEnable detour skipped: class was not resolved.");
+                return;
+            }
+
+            var method = IL2CPP.il2cpp_class_get_method_from_name(klass, "OnEnable", 0);
+            if (method == IntPtr.Zero)
+            {
+                Plugin.Log.LogWarning("CanvasScaler.OnEnable detour skipped: method was not resolved.");
+                return;
+            }
+
+            var methodPointer = Marshal.ReadIntPtr(method);
+            if (methodPointer == IntPtr.Zero)
+            {
+                Plugin.Log.LogWarning("CanvasScaler.OnEnable detour skipped: method pointer was null.");
+                return;
+            }
+
+            detour = new NativeDetour(methodPointer, replacement);
+            original = detour.GenerateTrampoline<OnEnableDelegate>();
+            detour.Apply();
+            Plugin.Log.LogInfo($"CanvasScaler.OnEnable detour installed at {Ptr(methodPointer)}.");
+        }
+
+        public static void Uninstall()
+        {
+            try
+            {
+                detour?.Undo();
+                detour?.Free();
+            }
+            catch
+            {
+                // Unload can race Unity teardown.
+            }
+            finally
+            {
+                detour = null;
+                original = null;
+            }
+        }
+
+        private static void OnEnableReplacement(IntPtr self, IntPtr methodInfo)
+        {
+            original?.Invoke(self, methodInfo);
+            Plugin.Apply(self);
+        }
+
+        private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
     }
 
     internal static class NativeCanvasScaler
@@ -91,10 +161,8 @@ namespace LimbusCanvasFix
         private static nint matchWidthOrHeightField;
         private static int appliedCount;
 
-        public static unsafe void Apply(CanvasScaler scaler)
+        public static unsafe void Apply(IntPtr obj)
         {
-            if (scaler == null) return;
-            var obj = IL2CPP.Il2CppObjectBaseToPtr(scaler);
             if (obj == IntPtr.Zero || !EnsureInitialized()) return;
 
             var mode = 0;

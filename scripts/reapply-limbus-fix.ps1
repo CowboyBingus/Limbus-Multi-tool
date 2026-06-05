@@ -12,9 +12,9 @@ function Info([string]$Message) {
     Write-Host "[reapply] $Message"
 }
 
-function Require-File([string]$Path) {
+function Require-File([string]$Path, [string]$Description = "file") {
     if (!(Test-Path -LiteralPath $Path)) {
-        throw "Required file not found: $Path"
+        throw "Required $Description not found: $Path"
     }
 }
 
@@ -87,6 +87,118 @@ function Set-ConfigValue([string]$ConfigPath, [string]$Section, [string]$Name, [
     }
 
     Set-Content -LiteralPath $ConfigPath -Value $lines
+}
+
+function Add-HashBytes([System.Security.Cryptography.HashAlgorithm]$Hash, [byte[]]$Bytes, [int]$Count = -1) {
+    if ($Count -lt 0) {
+        $Count = $Bytes.Length
+    }
+    if ($Count -le 0) {
+        return
+    }
+    [void]$Hash.TransformBlock($Bytes, 0, $Count, $Bytes, 0)
+}
+
+function Add-HashFile([System.Security.Cryptography.HashAlgorithm]$Hash, [string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $buffer = New-Object byte[] 81920
+        while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            Add-HashBytes $Hash $buffer $read
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
+function Add-HashString([System.Security.Cryptography.HashAlgorithm]$Hash, [string]$Value) {
+    Add-HashBytes $Hash ([System.Text.Encoding]::UTF8.GetBytes($Value))
+}
+
+function Get-BepInExInteropHash([string]$GameDir, [string]$CoreDir) {
+    $hash = [System.Security.Cryptography.MD5]::Create()
+    try {
+        Add-HashFile $hash (Join-Path $GameDir "GameAssembly.dll")
+
+        $unityLibs = Join-Path $GameDir "BepInEx\unity-libs"
+        if (Test-Path -LiteralPath $unityLibs) {
+            foreach ($path in [System.IO.Directory]::EnumerateFiles($unityLibs, "*.dll", [System.IO.SearchOption]::TopDirectoryOnly)) {
+                Add-HashString $hash ([System.IO.Path]::GetFileName($path))
+                Add-HashFile $hash $path
+            }
+        }
+
+        $renameMap = Join-Path $GameDir "BepInEx\DeobfuscationMap.csv.gz"
+        if (Test-Path -LiteralPath $renameMap) {
+            Add-HashFile $hash $renameMap
+        }
+
+        Add-HashString $hash ([System.Reflection.AssemblyName]::GetAssemblyName((Join-Path $CoreDir "Il2CppInterop.Generator.dll")).Version.ToString())
+        Add-HashString $hash ([System.Reflection.AssemblyName]::GetAssemblyName((Join-Path $CoreDir "Cpp2IL.Core.dll")).Version.ToString())
+        [void]$hash.TransformFinalBlock([byte[]]::new(0), 0, 0)
+        return (($hash.Hash | ForEach-Object { $_.ToString("x2") }) -join "")
+    } finally {
+        $hash.Dispose()
+    }
+}
+
+function Get-UnityVersion([string]$GameDir) {
+    $globalGameManagers = Join-Path $GameDir "LimbusCompany_Data\globalgamemanagers"
+    Require-File $globalGameManagers "Unity globalgamemanagers"
+    $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($globalGameManagers))
+    $match = [regex]::Match($text, '\d{4}\.\d+\.\d+[abfp]\d+')
+    if (!$match.Success) {
+        throw "Could not determine Unity version from $globalGameManagers"
+    }
+    return $match.Value
+}
+
+function Ensure-UnityBaseLibraries([string]$GameDir) {
+    $unityVersion = (Get-UnityVersion $GameDir) -replace '[a-z]\d+$', ''
+    $unityLibs = Join-Path $GameDir "BepInEx\unity-libs"
+    $zipPath = Join-Path $unityLibs "$unityVersion.zip"
+    $coreModule = Join-Path $unityLibs "UnityEngine.CoreModule.dll"
+
+    if (!(Test-Path -LiteralPath $unityLibs)) {
+        New-Item -ItemType Directory -Path $unityLibs -Force | Out-Null
+    }
+
+    if (!(Test-Path -LiteralPath $zipPath)) {
+        $url = "https://unity.bepinex.dev/libraries/$unityVersion.zip"
+        Info "Downloading Unity base libraries for $unityVersion"
+        Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing -TimeoutSec 120
+    }
+
+    if (!(Test-Path -LiteralPath $coreModule)) {
+        Info "Extracting Unity base libraries for $unityVersion"
+        Expand-Archive -LiteralPath $zipPath -DestinationPath $unityLibs -Force
+    }
+}
+
+function Copy-UnityBaseLibrariesToInterop([string]$GameDir) {
+    $interopDir = Join-Path $GameDir "BepInEx\interop"
+    if (!(Test-Path -LiteralPath $interopDir)) {
+        New-Item -ItemType Directory -Path $interopDir -Force | Out-Null
+    }
+
+    $unityLibs = Join-Path $GameDir "BepInEx\unity-libs"
+    $copied = 0
+    foreach ($path in [System.IO.Directory]::EnumerateFiles($unityLibs, "*.dll", [System.IO.SearchOption]::TopDirectoryOnly)) {
+        Copy-Item -LiteralPath $path -Destination (Join-Path $interopDir ([System.IO.Path]::GetFileName($path))) -Force
+        $copied++
+    }
+    Info "Copied $copied Unity base librar$(if ($copied -eq 1) { 'y' } else { 'ies' }) into BepInEx\interop"
+}
+
+function Write-BepInExInteropSkipHash([string]$GameDir, [string]$CoreDir) {
+    $interopDir = Join-Path $GameDir "BepInEx\interop"
+    if (!(Test-Path -LiteralPath $interopDir)) {
+        New-Item -ItemType Directory -Path $interopDir -Force | Out-Null
+    }
+    $hashPath = Join-Path $interopDir "assembly-hash.txt"
+    $hash = Get-BepInExInteropHash $GameDir $CoreDir
+    [System.IO.File]::WriteAllText($hashPath, $hash)
+    Info "Wrote BepInEx interop hash marker to skip Cpp2IL generation"
 }
 
 function New-CecilReaderParams([string]$AssemblyPath) {
@@ -452,13 +564,17 @@ function Test-InteropReady([string]$Path) {
     return $true
 }
 
+if ([string]::IsNullOrWhiteSpace($GameDir) -or $GameDir.TrimStart().StartsWith("-")) {
+    throw "GameDir was not parsed correctly: '$GameDir'. Run the installer backend from version 1.5 or newer."
+}
+
 $coreDir = Join-Path $GameDir "BepInEx\core"
 $interopDir = Join-Path $GameDir "BepInEx\interop"
 $pluginsDir = Join-Path $GameDir "BepInEx\plugins"
 $configPath = Join-Path $GameDir "BepInEx\config\BepInEx.cfg"
 $interopReady = Test-InteropReady $interopDir
 
-Require-File (Join-Path $coreDir "Mono.Cecil.dll")
+Require-File (Join-Path $coreDir "Mono.Cecil.dll") "BepInEx core Mono.Cecil.dll"
 Add-Type -Path (Join-Path $coreDir "Mono.Cecil.dll")
 
 if (!$SkipBuild) {
@@ -497,12 +613,16 @@ Info "Applying BepInEx config"
 Set-ConfigValue $configPath "Caching" "EnableAssemblyCache" "false"
 Set-ConfigValue $configPath "Logging" "UnityLogListening" "false"
 Set-ConfigValue $configPath "IL2CPP" "PreloadIL2CPPInteropAssemblies" "false"
-Set-ConfigValue $configPath "IL2CPP" "GlobalMetadataPath" "{GameDataPath}/il2cpp_data/Resources/System.JsonExtensions.dll-resources.dat"
 if ($EnableInteropGeneration -and !$interopReady) {
+    Set-ConfigValue $configPath "IL2CPP" "GlobalMetadataPath" "{GameDataPath}/il2cpp_data/Metadata/limbus-generated-metadata.dat"
     Set-ConfigValue $configPath "IL2CPP" "UpdateInteropAssemblies" "true"
     Info "Enabled BepInEx interop generation for the next launch"
 } else {
+    Set-ConfigValue $configPath "IL2CPP" "GlobalMetadataPath" "{GameDataPath}/il2cpp_data/Resources/System.JsonExtensions.dll-resources.dat"
     Set-ConfigValue $configPath "IL2CPP" "UpdateInteropAssemblies" "false"
+    Ensure-UnityBaseLibraries $GameDir
+    Copy-UnityBaseLibrariesToInterop $GameDir
+    Write-BepInExInteropSkipHash $GameDir $coreDir
 }
 
 if (!(Test-Path -LiteralPath $pluginsDir)) {
@@ -572,7 +692,7 @@ if ($interopReady) {
     }
     Patch-UnityEngineUI (Join-Path $interopDir "UnityEngine.UI.dll")
 } else {
-    Info "BepInEx\interop is not ready yet. Launch once to generate interop, then rerun this script."
+    Info "Generated game interop DLL set is not present; skipping legacy wrapper patching."
 }
 
 Info "Reapply complete"

@@ -16,6 +16,7 @@ $ErrorActionPreference = 'Stop'
 $base = $GameDir
 $res  = "$base\LimbusCompany_Data\il2cpp_data\Resources\System.JsonExtensions.dll-resources.dat"
 $bak  = "$base\LimbusCompany_Data\il2cpp_data\Resources\System.JsonExtensions.dll-resources.dat.resource-head-bak"
+$generatedMetadata = "$base\LimbusCompany_Data\il2cpp_data\Metadata\limbus-generated-metadata.dat"
 $template = Join-Path (Split-Path -Parent $PSScriptRoot) 'data\System.JsonExtensions.dll-resources.dat.template'
 $up   = "$base\UnityPlayer.dll"
 $ga   = "$base\GameAssembly.dll"
@@ -206,6 +207,36 @@ $tmp = "$res.new"
 [System.IO.File]::WriteAllBytes($tmp, $out)
 Move-Item -LiteralPath $tmp -Destination $res -Force
 "Written: $res"
+
+# 5b) Build the Cpp2IL-facing metadata carrier. Limbus's resource carrier starts
+#     at the metadata section table, without the canonical 8-byte
+#     magic/version preamble. Cpp2IL still needs that preamble and the section
+#     offsets must be shifted to account for it. The source carrier is rebuilt
+#     above from the current GameAssembly/UnityPlayer pair, so this file is
+#     regenerated on game updates instead of carrying stale interop output.
+$cpp2il = New-Object byte[] ($out.Length + 8)
+$cpp2il[0] = [byte]0xAF
+$cpp2il[1] = [byte]0x1B
+$cpp2il[2] = [byte]0xB1
+$cpp2il[3] = [byte]0xFA
+[BitConverter]::GetBytes([int32]29).CopyTo($cpp2il, 4)
+[Array]::Copy($out, 0, $cpp2il, 8, $out.Length)
+
+$metadataSectionCount = 37
+for ($i = 0; $i -lt $metadataSectionCount; $i++) {
+  $offsetPosition = 8 + ($i * 8)
+  $sectionOffset = [BitConverter]::ToInt32($cpp2il, $offsetPosition)
+  if ($sectionOffset -gt 0) {
+    [BitConverter]::GetBytes([int32]($sectionOffset + 8)).CopyTo($cpp2il, $offsetPosition)
+  }
+}
+
+$generatedMetadataDir = Split-Path -Parent $generatedMetadata
+if (-not (Test-Path -LiteralPath $generatedMetadataDir)) {
+  New-Item -ItemType Directory -Path $generatedMetadataDir -Force | Out-Null
+}
+[System.IO.File]::WriteAllBytes($generatedMetadata, $cpp2il)
+"Written Cpp2IL metadata carrier: $generatedMetadata"
 
 # 6) Verify
 $verify = [System.IO.File]::ReadAllBytes($res)
