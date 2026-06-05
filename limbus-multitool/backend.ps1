@@ -58,12 +58,41 @@ function Get-PluginDir([string]$Path) {
     return $dir
 }
 
-function Stop-GameIfRunning {
+function Stop-GameIfRunning([switch]$Required) {
     $processes = Get-Process -Name LimbusCompany -ErrorAction SilentlyContinue
     if ($processes) {
         Info "Stopping running LimbusCompany process so plugin DLLs and core files can be updated."
-        Stop-Process -InputObject $processes -Force
-        Start-Sleep -Seconds 2
+        $failures = @()
+        foreach ($process in $processes) {
+            try {
+                Stop-Process -InputObject $process -Force -ErrorAction Stop
+            } catch {
+                $failures += "PID $($process.Id): $($_.Exception.Message)"
+            }
+        }
+
+        if ($failures.Count -gt 0) {
+            $message = "Could not stop LimbusCompany. Close the game manually and run install again. $($failures -join '; ')"
+            if ($Required) {
+                Fail $message
+            } else {
+                Warn $message
+            }
+        }
+
+        $deadline = (Get-Date).AddSeconds(15)
+        while ((Get-Date) -lt $deadline) {
+            $stillRunning = Get-Process -Name LimbusCompany -ErrorAction SilentlyContinue
+            if (!$stillRunning) {
+                return
+            }
+            Start-Sleep -Milliseconds 500
+        }
+
+        if ($Required) {
+            Fail "LimbusCompany is still running. Close the game manually and run install again."
+        }
+        Warn "LimbusCompany is still running."
     }
 }
 
@@ -80,6 +109,29 @@ function Test-BepInExInstalled([string]$Path) {
         (Test-Path -LiteralPath (Join-Path $Path 'doorstop_config.ini')) -and
         (Test-Path -LiteralPath (Join-Path $Path 'winhttp.dll'))
     )
+}
+
+function Test-InteropReady([string]$Path) {
+    $interopDir = Join-Path $Path 'BepInEx\interop'
+    $required = @(
+        'Il2Cppmscorlib.dll',
+        'UnityEngine.CoreModule.dll',
+        'UnityEngine.dll',
+        'UnityEngine.UI.dll',
+        'UnityEngine.UIModule.dll'
+    )
+
+    if (!(Test-Path -LiteralPath $interopDir)) {
+        return $false
+    }
+
+    foreach ($name in $required) {
+        if (!(Test-Path -LiteralPath (Join-Path $interopDir $name))) {
+            return $false
+        }
+    }
+
+    return $true
 }
 
 function Require-InstallPayload {
@@ -102,6 +154,59 @@ function Require-InstallPayload {
     foreach ($item in $required) {
         Require-File (Join-Path $PayloadRoot $item[0]) $item[1]
     }
+}
+
+function Invoke-Reapply([switch]$EnableInteropGeneration) {
+    $script = Join-Path $PayloadRoot 'scripts\reapply-limbus-fix.ps1'
+    $args = @('-GameDir', $GameDir, '-RepoDir', $PayloadRoot, '-SkipBuild')
+    if ($EnableInteropGeneration) {
+        $args += '-EnableInteropGeneration'
+    }
+
+    & $script @args
+    if ($LASTEXITCODE) {
+        Fail "Install script failed with exit code $LASTEXITCODE."
+    }
+}
+
+function Start-GameForInteropGeneration {
+    Info "Launching Limbus Company once to generate BepInEx interop assemblies."
+    $process = Start-Process -FilePath (Join-Path $GameDir 'LimbusCompany.exe') -WorkingDirectory $GameDir -PassThru
+    Info "Waiting up to 5 minutes for BepInEx interop generation."
+
+    $deadline = (Get-Date).AddMinutes(5)
+    $readySince = $null
+    while ((Get-Date) -lt $deadline) {
+        if (Test-InteropReady $GameDir) {
+            if ($null -eq $readySince) {
+                $readySince = Get-Date
+                Info "Detected generated interop assemblies; waiting for writes to settle."
+            } elseif (((Get-Date) - $readySince).TotalSeconds -ge 5) {
+                Info "BepInEx interop assemblies generated."
+                return
+            }
+        } else {
+            $readySince = $null
+        }
+
+        try {
+            if ($process.HasExited) {
+                Warn "LimbusCompany exited before interop generation completed."
+                break
+            }
+        } catch {
+            Warn "Could not inspect launched game process: $($_.Exception.Message)"
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    if (Test-InteropReady $GameDir) {
+        Info "BepInEx interop assemblies generated."
+        return
+    }
+
+    Fail "BepInEx interop generation did not complete. Launch the game once, wait for the main menu, close it, and run install again."
 }
 
 function Get-BepInExDownloadUrl {
@@ -128,7 +233,7 @@ function Ensure-BepInEx {
         return
     }
 
-    Stop-GameIfRunning
+    Stop-GameIfRunning -Required
     $downloadUrl = Get-BepInExDownloadUrl | Select-Object -Last 1
     $workDir = Join-Path ([IO.Path]::GetTempPath()) ('limbus-bepinex-' + [guid]::NewGuid().ToString('N'))
     $zipPath = Join-Path $workDir 'bepinex.zip'
@@ -195,11 +300,15 @@ function Invoke-Install {
 
     $selected = Get-SelectedPlugins
     Ensure-BepInEx
-    Stop-GameIfRunning
+    Stop-GameIfRunning -Required
     Info "Applying core compatibility patch and deploying plugins."
-    & (Join-Path $PayloadRoot 'scripts\reapply-limbus-fix.ps1') -GameDir $GameDir -RepoDir $PayloadRoot -SkipBuild
-    if ($LASTEXITCODE) {
-        Fail "Install script failed with exit code $LASTEXITCODE."
+    Invoke-Reapply -EnableInteropGeneration
+
+    if (!(Test-InteropReady $GameDir)) {
+        Start-GameForInteropGeneration
+        Stop-GameIfRunning -Required
+        Info "Patching generated BepInEx interop assemblies."
+        Invoke-Reapply
     }
 
     Sync-SelectedPlugins -Selected $selected
@@ -243,7 +352,7 @@ function Invoke-Verify {
 
 function Invoke-Uninstall {
     Require-GameDir $GameDir
-    Stop-GameIfRunning
+    Stop-GameIfRunning -Required
     $pluginDir = Get-PluginDir $GameDir
     foreach ($name in @('LimbusCanvasFix.dll','LimbusWindowResizeFix.dll','LimbusFramePacingFix.dll')) {
         $path = Join-Path $pluginDir $name

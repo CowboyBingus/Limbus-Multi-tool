@@ -2,7 +2,8 @@ param(
     [string]$GameDir = "C:\Program Files (x86)\Steam\steamapps\common\Limbus Company",
     [string]$RepoDir = (Split-Path -Parent $PSScriptRoot),
     [switch]$SkipBuild,
-    [switch]$SkipCorePatch
+    [switch]$SkipCorePatch,
+    [switch]$EnableInteropGeneration
 )
 
 $ErrorActionPreference = "Stop"
@@ -429,10 +430,33 @@ function Patch-UnityEngineUI([string]$Path) {
     $ad.Write($Path)
 }
 
+function Test-InteropReady([string]$Path) {
+    $required = @(
+        "Il2Cppmscorlib.dll",
+        "UnityEngine.CoreModule.dll",
+        "UnityEngine.dll",
+        "UnityEngine.UI.dll",
+        "UnityEngine.UIModule.dll"
+    )
+
+    if (!(Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+
+    foreach ($name in $required) {
+        if (!(Test-Path -LiteralPath (Join-Path $Path $name))) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
 $coreDir = Join-Path $GameDir "BepInEx\core"
 $interopDir = Join-Path $GameDir "BepInEx\interop"
 $pluginsDir = Join-Path $GameDir "BepInEx\plugins"
 $configPath = Join-Path $GameDir "BepInEx\config\BepInEx.cfg"
+$interopReady = Test-InteropReady $interopDir
 
 Require-File (Join-Path $coreDir "Mono.Cecil.dll")
 Add-Type -Path (Join-Path $coreDir "Mono.Cecil.dll")
@@ -474,6 +498,12 @@ Set-ConfigValue $configPath "Caching" "EnableAssemblyCache" "false"
 Set-ConfigValue $configPath "Logging" "UnityLogListening" "false"
 Set-ConfigValue $configPath "IL2CPP" "PreloadIL2CPPInteropAssemblies" "false"
 Set-ConfigValue $configPath "IL2CPP" "GlobalMetadataPath" "{GameDataPath}/il2cpp_data/Resources/System.JsonExtensions.dll-resources.dat"
+if ($EnableInteropGeneration -and !$interopReady) {
+    Set-ConfigValue $configPath "IL2CPP" "UpdateInteropAssemblies" "true"
+    Info "Enabled BepInEx interop generation for the next launch"
+} else {
+    Set-ConfigValue $configPath "IL2CPP" "UpdateInteropAssemblies" "false"
+}
 
 if (!(Test-Path -LiteralPath $pluginsDir)) {
     New-Item -ItemType Directory -Path $pluginsDir | Out-Null
@@ -500,7 +530,7 @@ $framePacingPluginDll = Resolve-FirstExistingPath @(
 Info "Deploying LimbusFramePacingFix.dll"
 Copy-Item -LiteralPath $framePacingPluginDll -Destination (Join-Path $pluginsDir "LimbusFramePacingFix.dll") -Force
 
-if (Test-Path -LiteralPath $interopDir) {
+if ($interopReady) {
     Info "Reducing interop folder to known working load set"
     $disabledDir = Join-Path $GameDir "interop_disabled"
     if (!(Test-Path -LiteralPath $disabledDir)) {
@@ -542,7 +572,7 @@ if (Test-Path -LiteralPath $interopDir) {
     }
     Patch-UnityEngineUI (Join-Path $interopDir "UnityEngine.UI.dll")
 } else {
-    Info "BepInEx\interop does not exist yet. Launch once to generate interop, then rerun this script."
+    Info "BepInEx\interop is not ready yet. Launch once to generate interop, then rerun this script."
 }
 
 Info "Reapply complete"
