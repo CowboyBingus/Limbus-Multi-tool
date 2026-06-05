@@ -438,6 +438,7 @@ namespace LimbusCanvasFix
             new("/[Script]LoginSceneManager/[Canvas]/[Image]TouchToStart", width: -3000f),
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Rect]UnitStatusContent", anchoredXBySignMagnitude: 900f),
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Script]TabContentManager", anchoredXBySignMagnitude: 1000f),
+            new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Script]SideButtonList", anchoredX: 335f),
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Image]UnitStatusPanel", width: 3625f),
         };
 
@@ -684,6 +685,20 @@ namespace LimbusCanvasFix
                 }
             }
 
+            if ((kind == LayoutWriteKind.Any || kind == LayoutWriteKind.AnchoredPosition) && rule.AnchoredX.HasValue)
+            {
+                var position = InvokeVector2(rectGetAnchoredPosition, rect);
+                var targetX = rule.AnchoredX.Value;
+                if (Math.Abs(position.X - targetX) > Epsilon)
+                {
+                    var previous = position.X;
+                    position.X = targetX;
+                    InvokeSetVector2(rectSetAnchoredPosition, rect, position);
+                    details = $"anchoredPosition.x {previous:0.###}->{targetX:0.###}";
+                    changed = true;
+                }
+            }
+
             if (changed)
             {
                 var count = ++appliedCount;
@@ -799,21 +814,25 @@ namespace LimbusCanvasFix
 
     internal sealed class LayoutRule
     {
-        public LayoutRule(string path, float? width = null, float? anchoredXBySignMagnitude = null)
+        public LayoutRule(string path, float? width = null, float? anchoredXBySignMagnitude = null, float? anchoredX = null)
         {
             Path = path;
             LeafName = path[(path.LastIndexOf('/') + 1)..];
             Width = width;
             AnchoredXBySignMagnitude = anchoredXBySignMagnitude;
+            AnchoredX = anchoredX;
             Description = width.HasValue
                 ? $"{path} width={width.Value}"
-                : $"{path} anchoredX=+/-{anchoredXBySignMagnitude.GetValueOrDefault()}";
+                : anchoredX.HasValue
+                    ? $"{path} anchoredX={anchoredX.Value}"
+                    : $"{path} anchoredX=+/-{anchoredXBySignMagnitude.GetValueOrDefault()}";
         }
 
         public string Path { get; }
         public string LeafName { get; }
         public float? Width { get; }
         public float? AnchoredXBySignMagnitude { get; }
+        public float? AnchoredX { get; }
         public string Description { get; }
     }
 
