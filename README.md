@@ -17,7 +17,7 @@ The Lethe team's source code was referenced as a starting point for patching the
 - `src/LimbusCanvasFix/` - ultrawide UI canvas fix plugin.
 - `src/LimbusWindowResizeFix/` - window resizing plugin.
 - `src/LimbusFramePacingFix/` - 240 FPS cap and maximized-window frame pacing plugin.
-- `src/LimbusRuntimeUIInspector/` - optional localhost runtime UI inspector for RectTransform discovery and live edits.
+- `src/LimbusRuntimeUIInspector/` - optional localhost runtime UI inspector for live RectTransform and Transform discovery/edits.
 - `tools/patch-libcpp/` - compatibility patcher for BepInEx IL2CPP tooling.
 - `tools/test-stock-cpp2il/` - local diagnostic harness for Cpp2IL behavior.
 - `limbus-multitool/` - PySide6/Qt installer app for end users.

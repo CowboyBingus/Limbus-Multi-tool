@@ -24,7 +24,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string GUID = "com.you.limbusruntimeuiinspector";
     public const string NAME = "LimbusRuntimeUIInspector";
-    public const string VERSION = "0.1.0";
+    public const string VERSION = "0.2.0";
 
     internal static new ManualLogSource Log = null!;
     internal static ConfigEntry<bool> Enabled = null!;
@@ -38,7 +38,7 @@ public sealed class Plugin : BasePlugin
         Log = base.Log;
         Enabled = Config.Bind("General", "Enabled", true, "Starts the local runtime UI inspector server.");
         Port = Config.Bind("Server", "Port", 43129, "Localhost HTTP port for the inspector browser UI.");
-        MaxResults = Config.Bind("Inspector", "MaxResults", 150, "Maximum RectTransform rows returned per scan.");
+        MaxResults = Config.Bind("Inspector", "MaxResults", 1000, "Maximum live element rows returned per scan.");
         RequestTimeoutMilliseconds = Config.Bind("Inspector", "RequestTimeoutMilliseconds", 2000, "Reserved for future async inspector operations.");
         DebugLogging = Config.Bind("Diagnostics", "DebugLogging", true, "Writes detailed inspector server and scan/edit job lifecycle logs.");
 
@@ -46,6 +46,8 @@ public sealed class Plugin : BasePlugin
         if (Enabled.Value)
         {
             CanvasRootObserveDetour.Install();
+            RectTransformRootObserveDetour.Install();
+            GameObjectRootObserveDetour.Install();
             InspectorServer.Start(Port.Value);
         }
 
@@ -56,6 +58,8 @@ public sealed class Plugin : BasePlugin
     {
         InspectorServer.Stop();
         UnityPumpDetour.Uninstall();
+        GameObjectRootObserveDetour.Uninstall();
+        RectTransformRootObserveDetour.Uninstall();
         CanvasRootObserveDetour.Uninstall();
         return true;
     }
@@ -159,7 +163,15 @@ internal static class InspectorServer
                 {
                     var filter = request.Query.TryGetValue("filter", out var value) ? value : string.Empty;
                     var includeInactive = request.Query.TryGetValue("includeInactive", out var inactive) && inactive == "1";
-                    var job = InspectorJobs.QueueScan(filter, includeInactive, Math.Max(1, Plugin.MaxResults.Value));
+                    var includeTransforms = !request.Query.TryGetValue("includeTransforms", out var transforms) || transforms == "1";
+                    var maxResults = Math.Max(1, Plugin.MaxResults.Value);
+                    if (request.Query.TryGetValue("maxResults", out var rawMaxResults) &&
+                        int.TryParse(rawMaxResults, NumberStyles.Integer, CultureInfo.InvariantCulture, out var requestedMaxResults))
+                    {
+                        maxResults = Math.Clamp(requestedMaxResults, 1, 5000);
+                    }
+
+                    var job = InspectorJobs.QueueScan(filter, includeInactive, includeTransforms, maxResults);
                     WriteResponse(stream, 200, "application/json", JsonSerializer.Serialize(new ApiResponse<JobSnapshot>(true, job, null), JsonOptions.Default));
                     Plugin.Debug($"HTTP {requestId} queued scan job {job.JobId}.");
                     return;
@@ -408,7 +420,164 @@ internal static class CanvasRootObserveDetour
     private static void Replacement(IntPtr self, IntPtr methodInfo)
     {
         original?.Invoke(self, methodInfo);
-        CanvasRootRegistry.ObserveComponent(self);
+        CanvasRootRegistry.ObserveComponent(self, "CanvasScaler.OnEnable");
+    }
+
+    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
+}
+
+internal static class RectTransformRootObserveDetour
+{
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void SendReapplyDrivenPropertiesDelegate(IntPtr rectTransform, IntPtr methodInfo);
+
+    private static NativeDetour? detour;
+    private static SendReapplyDrivenPropertiesDelegate? original;
+    private static readonly SendReapplyDrivenPropertiesDelegate replacement = Replacement;
+
+    public static bool Install()
+    {
+        if (detour != null)
+            return true;
+
+        try
+        {
+            Plugin.Debug("Installing RectTransform relayout root observer.");
+            var rectClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform");
+            if (rectClass == IntPtr.Zero)
+            {
+                Plugin.Log.LogWarning("RectTransform root observer install failed: RectTransform class was not resolved.");
+                return false;
+            }
+
+            var method = IL2CPP.il2cpp_class_get_method_from_name(rectClass, "SendReapplyDrivenProperties", 1);
+            if (method == IntPtr.Zero)
+            {
+                Plugin.Log.LogWarning("RectTransform root observer install failed: SendReapplyDrivenProperties was not resolved.");
+                return false;
+            }
+
+            var methodPointer = Marshal.ReadIntPtr(method);
+            if (methodPointer == IntPtr.Zero)
+            {
+                Plugin.Log.LogWarning("RectTransform root observer install failed: method pointer was null.");
+                return false;
+            }
+
+            detour = new NativeDetour(methodPointer, replacement);
+            original = detour.GenerateTrampoline<SendReapplyDrivenPropertiesDelegate>();
+            detour.Apply();
+            Plugin.Log.LogInfo($"RectTransform relayout root observer installed at {Ptr(methodPointer)}.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"RectTransform root observer install failed: {ex}");
+            return false;
+        }
+    }
+
+    public static void Uninstall()
+    {
+        try
+        {
+            detour?.Undo();
+            detour?.Free();
+        }
+        catch
+        {
+            // Unity teardown can race plugin unload.
+        }
+        finally
+        {
+            detour = null;
+            original = null;
+        }
+    }
+
+    private static void Replacement(IntPtr rectTransform, IntPtr methodInfo)
+    {
+        original?.Invoke(rectTransform, methodInfo);
+        CanvasRootRegistry.ObserveTransformAndAncestors(rectTransform, "RectTransform.SendReapplyDrivenProperties");
+    }
+
+    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
+}
+
+internal static class GameObjectRootObserveDetour
+{
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void SetActiveDelegate(IntPtr self, byte active, IntPtr methodInfo);
+
+    private static NativeDetour? detour;
+    private static SetActiveDelegate? original;
+    private static readonly SetActiveDelegate replacement = Replacement;
+
+    public static bool Install()
+    {
+        if (detour != null)
+            return true;
+
+        try
+        {
+            Plugin.Debug("Installing GameObject.SetActive root observer.");
+            var gameObjectClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "GameObject");
+            if (gameObjectClass == IntPtr.Zero)
+            {
+                Plugin.Log.LogWarning("GameObject root observer install failed: GameObject class was not resolved.");
+                return false;
+            }
+
+            var method = IL2CPP.il2cpp_class_get_method_from_name(gameObjectClass, "SetActive", 1);
+            if (method == IntPtr.Zero)
+            {
+                Plugin.Log.LogWarning("GameObject root observer install failed: GameObject.SetActive was not resolved.");
+                return false;
+            }
+
+            var methodPointer = Marshal.ReadIntPtr(method);
+            if (methodPointer == IntPtr.Zero)
+            {
+                Plugin.Log.LogWarning("GameObject root observer install failed: method pointer was null.");
+                return false;
+            }
+
+            detour = new NativeDetour(methodPointer, replacement);
+            original = detour.GenerateTrampoline<SetActiveDelegate>();
+            detour.Apply();
+            Plugin.Log.LogInfo($"GameObject.SetActive root observer installed at {Ptr(methodPointer)}.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"GameObject root observer install failed: {ex}");
+            return false;
+        }
+    }
+
+    public static void Uninstall()
+    {
+        try
+        {
+            detour?.Undo();
+            detour?.Free();
+        }
+        catch
+        {
+            // Unity teardown can race plugin unload.
+        }
+        finally
+        {
+            detour = null;
+            original = null;
+        }
+    }
+
+    private static void Replacement(IntPtr self, byte active, IntPtr methodInfo)
+    {
+        original?.Invoke(self, active, methodInfo);
+        if (active != 0)
+            CanvasRootRegistry.ObserveGameObject(self, "GameObject.SetActive");
     }
 
     private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
@@ -416,7 +585,7 @@ internal static class CanvasRootObserveDetour
 
 internal static class CanvasRootRegistry
 {
-    private const int MaxKnownRoots = 64;
+    private const int MaxKnownRoots = 512;
 
     private static readonly object sync = new();
     private static readonly Dictionary<IntPtr, long> rootsSeen = new();
@@ -433,7 +602,7 @@ internal static class CanvasRootRegistry
         }
     }
 
-    public static void ObserveComponent(IntPtr component)
+    public static void ObserveComponent(IntPtr component, string source)
     {
         if (component == IntPtr.Zero)
             return;
@@ -441,28 +610,83 @@ internal static class CanvasRootRegistry
         try
         {
             var transform = UnityUiRuntime.TryGetTransformFromComponent(component);
-            if (transform == IntPtr.Zero)
-                return;
-
-            var added = false;
-            int rootCount;
-            lock (sync)
-            {
-                added = !rootsSeen.ContainsKey(transform);
-                rootsSeen[transform] = ++sequence;
-                TrimLocked();
-                rootCount = rootsSeen.Count;
-            }
-
-            var observed = Interlocked.Increment(ref observedCount);
-            if (added || observed <= 8 || observed % 100 == 0)
-                Plugin.Debug($"Canvas root observed: transform=0x{transform.ToString("X")}, roots={rootCount}, observed={observed}.");
+            ObserveTransformAndAncestors(transform, source);
         }
         catch (Exception ex)
         {
             var failures = Interlocked.Increment(ref failureCount);
             if (failures <= 8)
                 Plugin.Debug($"Canvas root observe failed #{failures}: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    public static void ObserveGameObject(IntPtr gameObject, string source)
+    {
+        if (gameObject == IntPtr.Zero)
+            return;
+
+        try
+        {
+            var transform = UnityUiRuntime.TryGetTransformFromGameObject(gameObject);
+            ObserveTransformAndAncestors(transform, source);
+        }
+        catch (Exception ex)
+        {
+            var failures = Interlocked.Increment(ref failureCount);
+            if (failures <= 8)
+                Plugin.Debug($"GameObject root observe failed #{failures}: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    public static void ObserveTransformAndAncestors(IntPtr transform, string source)
+    {
+        if (transform == IntPtr.Zero)
+            return;
+
+        var addedCount = 0;
+        int rootCount;
+        try
+        {
+            var observed = Interlocked.Increment(ref observedCount);
+            lock (sync)
+            {
+                if (rootsSeen.ContainsKey(transform))
+                {
+                    rootsSeen[transform] = ++sequence;
+                    TrimLocked();
+                    rootCount = rootsSeen.Count;
+                    if (observed <= 8 || observed % 1000 == 0)
+                        Plugin.Debug($"UI root candidate refreshed from {source}: start=0x{transform.ToString("X")}, roots={rootCount}, observed={observed}.");
+                    return;
+                }
+            }
+
+            var current = transform;
+            for (var depth = 0; depth < 16 && current != IntPtr.Zero; depth++)
+            {
+                lock (sync)
+                {
+                    if (!rootsSeen.ContainsKey(current))
+                        addedCount++;
+                    rootsSeen[current] = ++sequence;
+                    TrimLocked();
+                    rootCount = rootsSeen.Count;
+                }
+
+                current = UnityUiRuntime.TryGetParentTransform(current);
+            }
+
+            lock (sync)
+                rootCount = rootsSeen.Count;
+
+            if (observed <= 8 || observed % 1000 == 0)
+                Plugin.Debug($"UI root candidates observed from {source}: start=0x{transform.ToString("X")}, added={addedCount}, roots={rootCount}, observed={observed}.");
+        }
+        catch (Exception ex)
+        {
+            var failures = Interlocked.Increment(ref failureCount);
+            if (failures <= 8)
+                Plugin.Debug($"Transform root observe failed #{failures} from {source}: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -509,9 +733,9 @@ internal static class InspectorJobs
     private static readonly Dictionary<int, InspectorJob> jobs = new();
     private static int nextJobId;
 
-    public static JobSnapshot QueueScan(string? filter, bool includeInactive, int maxResults)
+    public static JobSnapshot QueueScan(string? filter, bool includeInactive, bool includeTransforms, int maxResults)
     {
-        var job = InspectorJob.Scan(Interlocked.Increment(ref nextJobId), filter, includeInactive, maxResults);
+        var job = InspectorJob.Scan(Interlocked.Increment(ref nextJobId), filter, includeInactive, includeTransforms, maxResults);
         Queue(job);
         return job.Snapshot();
     }
@@ -569,13 +793,14 @@ internal sealed class InspectorJob
     private UiElement? element;
     private string? error;
 
-    private InspectorJob(int jobId, string kind, string? filter, bool includeInactive, int maxResults, EditRequest? edit)
+    private InspectorJob(int jobId, string kind, string? filter, bool includeInactive, bool includeTransforms, int maxResults, EditRequest? edit)
     {
         JobId = jobId;
         Kind = kind;
         State = "pending";
         Filter = filter;
         IncludeInactive = includeInactive;
+        IncludeTransforms = includeTransforms;
         MaxResults = maxResults;
         this.edit = edit;
     }
@@ -585,15 +810,16 @@ internal sealed class InspectorJob
     public string State { get; private set; }
     public string? Filter { get; }
     public bool IncludeInactive { get; }
+    public bool IncludeTransforms { get; }
     public int MaxResults { get; }
     public long ElapsedMs => stopwatch.ElapsedMilliseconds;
     public int ResultCount => scanElements.Count;
 
-    public static InspectorJob Scan(int jobId, string? filter, bool includeInactive, int maxResults) =>
-        new(jobId, "scan", filter, includeInactive, maxResults, null);
+    public static InspectorJob Scan(int jobId, string? filter, bool includeInactive, bool includeTransforms, int maxResults) =>
+        new(jobId, "scan", filter, includeInactive, includeTransforms, maxResults, null);
 
     public static InspectorJob Edit(int jobId, EditRequest edit) =>
-        new(jobId, "edit", null, includeInactive: true, maxResults: 0, edit);
+        new(jobId, "edit", null, includeInactive: true, includeTransforms: true, maxResults: 0, edit);
 
     public void Run()
     {
@@ -604,9 +830,9 @@ internal sealed class InspectorJob
         {
             if (Kind == "scan")
             {
-                var scan = UnityUiRuntime.ScanObservedCanvasRoots(Filter, IncludeInactive, MaxResults);
+                var scan = UnityUiRuntime.ScanObservedRoots(Filter, IncludeInactive, IncludeTransforms, MaxResults);
                 RectTransformCapture.ReplaceScanCache(scan.Elements);
-                CompleteScan(scan.Elements.ConvertAll(item => item.Element), $"live-roots roots={scan.RootCount} visited={scan.VisitedCount} matched={scan.MatchedCount} readFailures={scan.ReadFailureCount}");
+                CompleteScan(scan.Elements.ConvertAll(item => item.Element), $"live-roots roots={scan.RootCount} visited={scan.VisitedCount} matched={scan.MatchedCount} returnedTransforms={scan.TransformOnlyCount} truncated={scan.Truncated} readFailures={scan.ReadFailureCount}");
             }
             else if (edit != null)
             {
@@ -770,7 +996,7 @@ internal sealed class HttpRequest
 
 internal static unsafe class UnityUiRuntime
 {
-    private const int MaxTraversalNodes = 8000;
+    private const int MaxTraversalNodes = 25000;
 
     private static bool initialized;
     private static IntPtr objectClass;
@@ -790,6 +1016,8 @@ internal static unsafe class UnityUiRuntime
     private static IntPtr transformGetParent;
     private static IntPtr transformGetChildCount;
     private static IntPtr transformGetChild;
+    private static IntPtr transformGetLocalPosition;
+    private static IntPtr transformSetLocalPosition;
     private static IntPtr transformGetLocalScale;
     private static IntPtr transformSetLocalScale;
     private static IntPtr rectGetAnchoredPosition;
@@ -808,21 +1036,33 @@ internal static unsafe class UnityUiRuntime
     {
         EnsureInitialized();
         var gameObject = InvokeObject(componentGetGameObject, component);
+        return TryGetTransformFromGameObject(gameObject);
+    }
+
+    public static IntPtr TryGetTransformFromGameObject(IntPtr gameObject)
+    {
+        EnsureInitialized();
         return gameObject == IntPtr.Zero ? IntPtr.Zero : InvokeObject(gameObjectGetTransform, gameObject);
     }
 
-    public static ScanResult ScanObservedCanvasRoots(string? filter, bool includeInactive, int maxResults)
+    public static IntPtr TryGetParentTransform(IntPtr transform)
+    {
+        EnsureInitialized();
+        return transform == IntPtr.Zero ? IntPtr.Zero : InvokeObject(transformGetParent, transform);
+    }
+
+    public static ScanResult ScanObservedRoots(string? filter, bool includeInactive, bool includeTransforms, int maxResults)
     {
         var stopwatch = Stopwatch.StartNew();
         EnsureInitialized();
 
         var roots = CanvasRootRegistry.SnapshotRoots();
-        Plugin.Log.LogInfo($"Inspector scan: live canvas traversal begin roots={roots.Count}, includeInactive={includeInactive}, maxResults={maxResults}, filter='{filter ?? ""}'.");
+        Plugin.Log.LogInfo($"Inspector scan: live hierarchy traversal begin roots={roots.Count}, includeInactive={includeInactive}, includeTransforms={includeTransforms}, maxResults={maxResults}, filter='{filter ?? ""}'.");
 
         if (roots.Count == 0)
         {
-            Plugin.Log.LogWarning("Inspector scan: no CanvasScaler roots have been observed yet. Let the game reach an active UI screen, then scan again.");
-            return new ScanResult(0, 0, 0, 0, new List<ScannedUiElement>());
+            Plugin.Log.LogWarning("Inspector scan: no UI roots have been observed yet. Let the game reach an active UI screen, then scan again.");
+            return new ScanResult(0, 0, 0, 0, 0, false, new List<ScannedUiElement>());
         }
 
         ForceUpdateCanvasesForInspector();
@@ -834,6 +1074,7 @@ internal static unsafe class UnityUiRuntime
         var visitedCount = 0;
         var readFailureCount = 0;
         var filterText = string.IsNullOrWhiteSpace(filter) ? null : filter.Trim();
+        var transformOnlyCount = 0;
 
         for (var i = roots.Count - 1; i >= 0; i--)
         {
@@ -851,19 +1092,22 @@ internal static unsafe class UnityUiRuntime
             if (depth < 64)
                 PushChildren(transform, depth, stack);
 
-            if (!IsRectTransformObject(transform))
+            var isRectTransform = IsRectTransformObject(transform);
+            if (!isRectTransform && !includeTransforms)
                 continue;
 
             UiElement? item;
             try
             {
-                item = TryReadElement(transform, includeInactive);
+                item = isRectTransform
+                    ? TryReadRectElement(transform, includeInactive)
+                    : TryReadTransformElement(transform, includeInactive);
             }
             catch (Exception ex)
             {
                 readFailureCount++;
-                if (readFailureCount <= 8)
-                    Plugin.Debug($"Inspector scan: failed to read RectTransform 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
+                if (readFailureCount <= 12)
+                    Plugin.Debug($"Inspector scan: failed to read transform 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
                 continue;
             }
 
@@ -877,6 +1121,8 @@ internal static unsafe class UnityUiRuntime
                 continue;
 
             candidates.Add(new ScannedUiElement(item, transform));
+            if (!isRectTransform)
+                transformOnlyCount++;
             if (!includeInactive && candidates.Count >= maxResults)
                 break;
         }
@@ -899,11 +1145,12 @@ internal static unsafe class UnityUiRuntime
         for (var i = 0; i < returnedCount; i++)
             returned.Add(candidates[i]);
 
-        Plugin.Log.LogInfo($"Inspector scan: live canvas traversal complete roots={roots.Count}, visited={visitedCount}, matched={candidates.Count}, returned={returned.Count}, readFailures={readFailureCount}, elapsedMs={stopwatch.ElapsedMilliseconds}.");
-        return new ScanResult(roots.Count, visitedCount, candidates.Count, readFailureCount, returned);
+        var truncated = stack.Count > 0 && visitedCount >= MaxTraversalNodes;
+        Plugin.Log.LogInfo($"Inspector scan: live hierarchy traversal complete roots={roots.Count}, visited={visitedCount}, matched={candidates.Count}, returned={returned.Count}, transformOnly={transformOnlyCount}, truncated={truncated}, readFailures={readFailureCount}, elapsedMs={stopwatch.ElapsedMilliseconds}.");
+        return new ScanResult(roots.Count, visitedCount, candidates.Count, transformOnlyCount, readFailureCount, truncated, returned);
     }
 
-    public static UiElement? TryReadElement(IntPtr rect, bool includeInactive)
+    public static UiElement? TryReadRectElement(IntPtr rect, bool includeInactive)
     {
         EnsureInitialized();
         var gameObject = InvokeObject(componentGetGameObject, rect);
@@ -915,6 +1162,20 @@ internal static unsafe class UnityUiRuntime
             return null;
 
         return ReadElement(rect, gameObject, BuildPath(rect), activeInHierarchy);
+    }
+
+    public static UiElement? TryReadTransformElement(IntPtr transform, bool includeInactive)
+    {
+        EnsureInitialized();
+        var gameObject = InvokeObject(componentGetGameObject, transform);
+        if (gameObject == IntPtr.Zero)
+            return null;
+
+        var activeInHierarchy = InvokeBool(gameObjectGetActiveInHierarchy, gameObject);
+        if (!includeInactive && !activeInHierarchy)
+            return null;
+
+        return ReadTransformElement(transform, gameObject, BuildPath(transform), activeInHierarchy);
     }
 
     public static void ForceUpdateCanvasesForInspector()
@@ -946,73 +1207,84 @@ internal static unsafe class UnityUiRuntime
         }
     }
 
-    public static UiElement ApplyEdit(EditRequest edit, IntPtr rect)
+    public static UiElement ApplyEdit(EditRequest edit, IntPtr transform)
     {
         var stopwatch = Stopwatch.StartNew();
         Plugin.Log.LogInfo($"Inspector edit: apply begin for id={edit.Id}.");
         EnsureInitialized();
 
-        var gameObject = InvokeObject(componentGetGameObject, rect);
+        var gameObject = InvokeObject(componentGetGameObject, transform);
         if (gameObject == IntPtr.Zero)
-            throw new InvalidOperationException($"Cached RectTransform for id {edit.Id} no longer has a GameObject.");
+            throw new InvalidOperationException($"Cached inspector target for id {edit.Id} no longer has a GameObject.");
 
         var actualId = InvokeInt(objectGetInstanceId, gameObject);
         if (actualId != edit.Id)
-            throw new InvalidOperationException($"Cached RectTransform id mismatch. Expected {edit.Id}, found {actualId}. Run a fresh scan.");
+            throw new InvalidOperationException($"Cached inspector target id mismatch. Expected {edit.Id}, found {actualId}. Run a fresh scan.");
 
         if (edit.Active.HasValue)
             InvokeSetBool(gameObjectSetActive, gameObject, edit.Active.Value);
 
-        if (edit.AnchoredX.HasValue || edit.AnchoredY.HasValue)
+        var isRectTransform = IsRectTransformObject(transform);
+
+        if (isRectTransform && (edit.AnchoredX.HasValue || edit.AnchoredY.HasValue))
         {
-            var value = InvokeVector2(rectGetAnchoredPosition, rect);
+            var value = InvokeVector2(rectGetAnchoredPosition, transform);
             if (edit.AnchoredX.HasValue) value.X = edit.AnchoredX.Value;
             if (edit.AnchoredY.HasValue) value.Y = edit.AnchoredY.Value;
-            InvokeSetVector2(rectSetAnchoredPosition, rect, value);
+            InvokeSetVector2(rectSetAnchoredPosition, transform, value);
+        }
+        else if (!isRectTransform && (edit.AnchoredX.HasValue || edit.AnchoredY.HasValue))
+        {
+            var value = InvokeVector3(transformGetLocalPosition, transform);
+            if (edit.AnchoredX.HasValue) value.X = edit.AnchoredX.Value;
+            if (edit.AnchoredY.HasValue) value.Y = edit.AnchoredY.Value;
+            InvokeSetVector3(transformSetLocalPosition, transform, value);
         }
 
-        if (edit.Width.HasValue || edit.Height.HasValue)
+        if (isRectTransform && (edit.Width.HasValue || edit.Height.HasValue))
         {
-            var value = InvokeVector2(rectGetSizeDelta, rect);
+            var value = InvokeVector2(rectGetSizeDelta, transform);
             if (edit.Width.HasValue) value.X = edit.Width.Value;
             if (edit.Height.HasValue) value.Y = edit.Height.Value;
-            InvokeSetVector2(rectSetSizeDelta, rect, value);
+            InvokeSetVector2(rectSetSizeDelta, transform, value);
         }
 
-        if (edit.AnchorMinX.HasValue || edit.AnchorMinY.HasValue)
+        if (isRectTransform && (edit.AnchorMinX.HasValue || edit.AnchorMinY.HasValue))
         {
-            var value = InvokeVector2(rectGetAnchorMin, rect);
+            var value = InvokeVector2(rectGetAnchorMin, transform);
             if (edit.AnchorMinX.HasValue) value.X = edit.AnchorMinX.Value;
             if (edit.AnchorMinY.HasValue) value.Y = edit.AnchorMinY.Value;
-            InvokeSetVector2(rectSetAnchorMin, rect, value);
+            InvokeSetVector2(rectSetAnchorMin, transform, value);
         }
 
-        if (edit.AnchorMaxX.HasValue || edit.AnchorMaxY.HasValue)
+        if (isRectTransform && (edit.AnchorMaxX.HasValue || edit.AnchorMaxY.HasValue))
         {
-            var value = InvokeVector2(rectGetAnchorMax, rect);
+            var value = InvokeVector2(rectGetAnchorMax, transform);
             if (edit.AnchorMaxX.HasValue) value.X = edit.AnchorMaxX.Value;
             if (edit.AnchorMaxY.HasValue) value.Y = edit.AnchorMaxY.Value;
-            InvokeSetVector2(rectSetAnchorMax, rect, value);
+            InvokeSetVector2(rectSetAnchorMax, transform, value);
         }
 
-        if (edit.PivotX.HasValue || edit.PivotY.HasValue)
+        if (isRectTransform && (edit.PivotX.HasValue || edit.PivotY.HasValue))
         {
-            var value = InvokeVector2(rectGetPivot, rect);
+            var value = InvokeVector2(rectGetPivot, transform);
             if (edit.PivotX.HasValue) value.X = edit.PivotX.Value;
             if (edit.PivotY.HasValue) value.Y = edit.PivotY.Value;
-            InvokeSetVector2(rectSetPivot, rect, value);
+            InvokeSetVector2(rectSetPivot, transform, value);
         }
 
         if (edit.ScaleX.HasValue || edit.ScaleY.HasValue || edit.ScaleZ.HasValue)
         {
-            var value = InvokeVector3(transformGetLocalScale, rect);
+            var value = InvokeVector3(transformGetLocalScale, transform);
             if (edit.ScaleX.HasValue) value.X = edit.ScaleX.Value;
             if (edit.ScaleY.HasValue) value.Y = edit.ScaleY.Value;
             if (edit.ScaleZ.HasValue) value.Z = edit.ScaleZ.Value;
-            InvokeSetVector3(transformSetLocalScale, rect, value);
+            InvokeSetVector3(transformSetLocalScale, transform, value);
         }
 
-        var updated = ReadElement(rect, gameObject, BuildPath(rect), InvokeBool(gameObjectGetActiveInHierarchy, gameObject));
+        var updated = isRectTransform
+            ? ReadElement(transform, gameObject, BuildPath(transform), InvokeBool(gameObjectGetActiveInHierarchy, gameObject))
+            : ReadTransformElement(transform, gameObject, BuildPath(transform), InvokeBool(gameObjectGetActiveInHierarchy, gameObject));
         Plugin.Log.LogInfo($"Inspector edit: applied id={edit.Id} in {stopwatch.ElapsedMilliseconds}ms.");
         return updated;
     }
@@ -1030,6 +1302,7 @@ internal static unsafe class UnityUiRuntime
             InvokeInt(objectGetInstanceId, gameObject),
             InvokeString(objectGetName, gameObject),
             path,
+            "RectTransform",
             InvokeBool(gameObjectGetActiveSelf, gameObject),
             activeInHierarchy,
             Round(anchored.X),
@@ -1042,6 +1315,33 @@ internal static unsafe class UnityUiRuntime
             Round(anchorMax.Y),
             Round(pivot.X),
             Round(pivot.Y),
+            Round(scale.X),
+            Round(scale.Y),
+            Round(scale.Z));
+    }
+
+    private static UiElement ReadTransformElement(IntPtr transform, IntPtr gameObject, string path, bool activeInHierarchy)
+    {
+        var position = InvokeVector3(transformGetLocalPosition, transform);
+        var scale = InvokeVector3(transformGetLocalScale, transform);
+
+        return new UiElement(
+            InvokeInt(objectGetInstanceId, gameObject),
+            InvokeString(objectGetName, gameObject),
+            path,
+            "Transform",
+            InvokeBool(gameObjectGetActiveSelf, gameObject),
+            activeInHierarchy,
+            Round(position.X),
+            Round(position.Y),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             Round(scale.X),
             Round(scale.Y),
             Round(scale.Z));
@@ -1148,6 +1448,8 @@ internal static unsafe class UnityUiRuntime
         transformGetParent = RequireMethod(transformClass, "get_parent", 0);
         transformGetChildCount = RequireMethod(transformClass, "get_childCount", 0);
         transformGetChild = RequireMethod(transformClass, "GetChild", 1);
+        transformGetLocalPosition = RequireMethod(transformClass, "get_localPosition", 0);
+        transformSetLocalPosition = RequireMethod(transformClass, "set_localPosition", 1);
         transformGetLocalScale = RequireMethod(transformClass, "get_localScale", 0);
         transformSetLocalScale = RequireMethod(transformClass, "set_localScale", 1);
         rectGetAnchoredPosition = RequireMethod(rectTransformClass, "get_anchoredPosition", 0);
@@ -1273,7 +1575,9 @@ internal sealed record ScanResult(
     int RootCount,
     int VisitedCount,
     int MatchedCount,
+    int TransformOnlyCount,
     int ReadFailureCount,
+    bool Truncated,
     List<ScannedUiElement> Elements);
 
 internal sealed record ElementList(int Count, IReadOnlyList<UiElement> Elements);
@@ -1291,6 +1595,7 @@ internal sealed record UiElement(
     int Id,
     string Name,
     string Path,
+    string Kind,
     bool ActiveSelf,
     bool ActiveInHierarchy,
     float AnchoredX,
@@ -1361,30 +1666,34 @@ main{display:grid;grid-template-columns:minmax(360px,1fr) 360px;height:calc(100v
 </style>
 </head>
 <body>
-<header><h1>Limbus Runtime UI Inspector</h1><span class="muted">Local runtime RectTransform editor</span></header>
+<header><h1>Limbus Runtime UI Inspector</h1><span class="muted">Local runtime Transform editor</span></header>
 <main>
 <section class="left">
 <div class="toolbar">
 <input id="filter" type="text" placeholder="Filter by name or hierarchy path">
 <label><input id="inactive" type="checkbox"> include inactive</label>
+<label><input id="transforms" type="checkbox" checked> transforms</label>
+<input id="limit" type="number" min="1" max="5000" step="100" value="1000" title="Maximum returned rows" style="width:76px">
 <button id="refresh" class="primary">Refresh</button>
 </div>
-<div class="tablewrap"><table><thead><tr><th style="width:80px">ID</th><th style="width:210px">Name</th><th>Path</th><th style="width:70px">Active</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="tablewrap"><table><thead><tr><th style="width:80px">ID</th><th style="width:120px">Type</th><th style="width:210px">Name</th><th>Path</th><th style="width:70px">Active</th></tr></thead><tbody id="rows"></tbody></table></div>
 </section>
 <aside class="right">
-<div id="empty" class="empty">Select an element to edit its RectTransform.</div>
+<div id="empty" class="empty">Select an element to edit it.</div>
 <div id="editor" hidden>
 <h2 id="title" style="font-size:15px;margin:0"></h2>
 <div id="path" class="path"></div>
 <label><input id="active" type="checkbox"> active self</label>
-<h3>Anchored Position</h3>
+<h3 id="posTitle">Position</h3>
 <div class="grid"><label class="field"><span>X</span><input id="anchoredX" type="number" step="0.1"></label><label class="field"><span>Y</span><input id="anchoredY" type="number" step="0.1"></label></div>
+<div id="rectOnly">
 <h3>Size Delta</h3>
 <div class="grid"><label class="field"><span>Width</span><input id="width" type="number" step="0.1"></label><label class="field"><span>Height</span><input id="height" type="number" step="0.1"></label></div>
 <h3>Anchors</h3>
 <div class="grid"><label class="field"><span>Min X</span><input id="anchorMinX" type="number" step="0.01"></label><label class="field"><span>Min Y</span><input id="anchorMinY" type="number" step="0.01"></label><label class="field"><span>Max X</span><input id="anchorMaxX" type="number" step="0.01"></label><label class="field"><span>Max Y</span><input id="anchorMaxY" type="number" step="0.01"></label></div>
 <h3>Pivot</h3>
 <div class="grid"><label class="field"><span>X</span><input id="pivotX" type="number" step="0.01"></label><label class="field"><span>Y</span><input id="pivotY" type="number" step="0.01"></label></div>
+</div>
 <h3>Local Scale</h3>
 <div class="grid three"><label class="field"><span>X</span><input id="scaleX" type="number" step="0.01"></label><label class="field"><span>Y</span><input id="scaleY" type="number" step="0.01"></label><label class="field"><span>Z</span><input id="scaleZ" type="number" step="0.01"></label></div>
 <div class="actions"><button id="apply" class="primary">Apply</button><button id="hide" class="danger">Hide</button><span id="status" class="status"></span></div>
@@ -1397,11 +1706,11 @@ const $=id=>document.getElementById(id);
 const fields=["anchoredX","anchoredY","width","height","anchorMinX","anchorMinY","anchorMaxX","anchorMaxY","pivotX","pivotY","scaleX","scaleY","scaleZ"];
 async function api(path, opts){const r=await fetch(path, opts); const j=await r.json(); if(!j.ok) throw new Error(j.error||"request failed"); return j.data;}
 function setStatus(s){$("status").textContent=s||""}
-function fill(e){selected=e;$("empty").hidden=true;$("editor").hidden=false;$("title").textContent=`${e.name} (${e.id})`;$("path").textContent=e.path;$("active").checked=e.activeSelf;for(const f of fields)$(`${f}`).value=e[f]??"";document.querySelectorAll("tr").forEach(tr=>tr.classList.toggle("selected",Number(tr.dataset.id)===e.id));}
-function render(){const tbody=$("rows");tbody.innerHTML="";for(const e of rows){const tr=document.createElement("tr");tr.dataset.id=e.id;tr.innerHTML=`<td>${e.id}</td><td title="${esc(e.name)}">${esc(e.name)}</td><td title="${esc(e.path)}">${esc(e.path)}</td><td>${e.activeInHierarchy?"yes":"no"}</td>`;tr.onclick=()=>fill(e);tbody.appendChild(tr);}}
+function fill(e){selected=e;$("empty").hidden=true;$("editor").hidden=false;$("title").textContent=`${e.name} (${e.id})`;$("path").textContent=e.path;$("active").checked=e.activeSelf;$("posTitle").textContent=e.kind==="RectTransform"?"Anchored Position":"Local Position";$("rectOnly").hidden=e.kind!=="RectTransform";for(const f of fields)$(`${f}`).value=e[f]??"";document.querySelectorAll("tr").forEach(tr=>tr.classList.toggle("selected",Number(tr.dataset.id)===e.id));}
+function render(){const tbody=$("rows");tbody.innerHTML="";for(const e of rows){const tr=document.createElement("tr");tr.dataset.id=e.id;tr.innerHTML=`<td>${e.id}</td><td>${esc(e.kind||"")}</td><td title="${esc(e.name)}">${esc(e.name)}</td><td title="${esc(e.path)}">${esc(e.path)}</td><td>${e.activeInHierarchy?"yes":"no"}</td>`;tr.onclick=()=>fill(e);tbody.appendChild(tr);}}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 async function waitJob(job, label){let current=job;while(current.state==="pending"||current.state==="running"){setStatus(`${label} ${current.state} (${current.elapsedMs}ms)`);await new Promise(r=>setTimeout(r,250));current=await api(`/api/job?id=${current.jobId}`);}if(current.state!=="complete")throw new Error(current.error||`${label} failed`);return current;}
-async function refresh(){setStatus("queueing scan");const q=new URLSearchParams({filter:$("filter").value||"",includeInactive:$("inactive").checked?"1":"0"});const job=await api(`/api/scan?${q}`);const done=await waitJob(job,"scan");rows=done.result?.elements||[];render();setStatus(`${rows.length} elements`);if(selected){const next=rows.find(x=>x.id===selected.id);if(next)fill(next);}}
+async function refresh(){setStatus("queueing scan");const q=new URLSearchParams({filter:$("filter").value||"",includeInactive:$("inactive").checked?"1":"0",includeTransforms:$("transforms").checked?"1":"0",maxResults:$("limit").value||"1000"});const job=await api(`/api/scan?${q}`);const done=await waitJob(job,"scan");rows=done.result?.elements||[];render();setStatus(`${rows.length} elements`);if(selected){const next=rows.find(x=>x.id===selected.id);if(next)fill(next);}}
 async function apply(activeOverride){if(!selected)return;const body={id:selected.id};body.active=activeOverride===undefined?$("active").checked:activeOverride;for(const f of fields){const v=$(`${f}`).value;if(v!=="")body[f]=Number(v);}setStatus("queueing edit");const job=await api("/api/edit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const done=await waitJob(job,"edit");if(done.element)selected=done.element;setStatus("applied");await refresh();}
 $("refresh").onclick=()=>refresh().catch(e=>setStatus(e.message));$("apply").onclick=()=>apply().catch(e=>setStatus(e.message));$("hide").onclick=()=>apply(false).catch(e=>setStatus(e.message));$("filter").onkeydown=e=>{if(e.key==="Enter")refresh().catch(err=>setStatus(err.message));};setStatus("ready");
 </script>
