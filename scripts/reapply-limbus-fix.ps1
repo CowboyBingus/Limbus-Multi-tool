@@ -590,6 +590,9 @@ if (!$SkipBuild) {
     Info "Building LimbusFramePacingFix"
     dotnet build (Join-Path $RepoDir "src\LimbusFramePacingFix\LimbusFramePacingFix.csproj") -c Release /p:SkipDeploy=true
 
+    Info "Building LimbusHdrBalanceFix"
+    dotnet build (Join-Path $RepoDir "src\LimbusHdrBalanceFix\LimbusHdrBalanceFix.csproj") -c Release /p:SkipDeploy=true
+
     Info "Building LimbusRuntimeUIInspector"
     dotnet build (Join-Path $RepoDir "src\LimbusRuntimeUIInspector\LimbusRuntimeUIInspector.csproj") -c Release /p:SkipDeploy=true
 }
@@ -652,6 +655,13 @@ $framePacingPluginDll = Resolve-FirstExistingPath @(
 ) "LimbusFramePacingFix.dll"
 Info "Deploying LimbusFramePacingFix.dll"
 Copy-Item -LiteralPath $framePacingPluginDll -Destination (Join-Path $pluginsDir "LimbusFramePacingFix.dll") -Force
+
+$hdrBalancePluginDll = Resolve-FirstExistingPath @(
+    (Join-Path $RepoDir "src\LimbusHdrBalanceFix\bin\Release\LimbusHdrBalanceFix.dll"),
+    (Join-Path $RepoDir "bin\Release\LimbusHdrBalanceFix.dll")
+) "LimbusHdrBalanceFix.dll"
+Info "Deploying LimbusHdrBalanceFix.dll"
+Copy-Item -LiteralPath $hdrBalancePluginDll -Destination (Join-Path $pluginsDir "LimbusHdrBalanceFix.dll") -Force
 
 $inspectorPluginDll = Resolve-FirstExistingPath @(
     (Join-Path $RepoDir "src\LimbusRuntimeUIInspector\bin\Release\LimbusRuntimeUIInspector.dll"),

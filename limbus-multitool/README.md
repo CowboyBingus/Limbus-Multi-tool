@@ -1,6 +1,6 @@
 # Limbus Multi-tool
 
-Qt-based installer for the Limbus ultrawide, window-resize, FPS/frame-pacing, and optional runtime UI inspector plugins. It can install the official BepInEx Unity IL2CPP Windows x64 build when BepInEx is not already present.
+Qt-based installer for the Limbus ultrawide, window-resize, FPS/frame-pacing, HDR balance, and optional runtime UI inspector plugins. It can install the official BepInEx Unity IL2CPP Windows x64 build when BepInEx is not already present.
 
 ## Developer usage
 
@@ -10,6 +10,7 @@ From the repository root:
 dotnet build .\src\LimbusCanvasFix\LimbusCanvasFix.csproj -c Release -p:SkipDeploy=true
 dotnet build .\src\LimbusWindowResizeFix\LimbusWindowResizeFix.csproj -c Release -p:SkipDeploy=true
 dotnet build .\src\LimbusFramePacingFix\LimbusFramePacingFix.csproj -c Release -p:SkipDeploy=true
+dotnet build .\src\LimbusHdrBalanceFix\LimbusHdrBalanceFix.csproj -c Release -p:SkipDeploy=true
 dotnet build .\src\LimbusRuntimeUIInspector\LimbusRuntimeUIInspector.csproj -c Release -p:SkipDeploy=true
 .\limbus-multitool\prepare_release_payload.ps1
 py -3.10 -m venv .\limbus-multitool\.venv
@@ -37,7 +38,10 @@ Expected verification markers:
 - `Applied CanvasScaler ultrawide fix`
 - `Enabled resizing for HWND`
 - `Frame pacing apply`
+- `HDR output apply`
 - `LimbusRuntimeUIInspector` when the optional inspector is selected
+
+When the HDR balance plugin is installed, it applies Unity HDR output paper-white and automatic HDR tonemapping corrections without disabling HDR entirely.
 
 The runtime inspector is a developer tool. When selected, launch the game and open `http://127.0.0.1:43129/` on the same machine to scan and edit live `RectTransform` and transform-only screen objects. It seeds roots from CanvasScaler, RectTransform relayout, and GameObject activation hooks, prunes stale roots before scans, returns 5000 active rows by default, and can include inactive entries when needed.
 

@@ -63,6 +63,7 @@ REQUIRED_PAYLOAD_FILES = (
     ("bin", "Release", "LimbusCanvasFix.dll"),
     ("bin", "Release", "LimbusWindowResizeFix.dll"),
     ("bin", "Release", "LimbusFramePacingFix.dll"),
+    ("bin", "Release", "LimbusHdrBalanceFix.dll"),
     ("bin", "Release", "LimbusRuntimeUIInspector.dll"),
     ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.exe"),
     ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.dll"),
@@ -392,20 +393,25 @@ class MainWindow(QMainWindow):
         self.resize_check.setToolTip("Restores the resizable window border after the Unity engine upgrade.")
         self.framepacing_check = QCheckBox("FPS / frame pacing fix")
         self.framepacing_check.setToolTip("Forces a 240 FPS cap, disables Unity v-sync, and keeps maximized window mode.")
+        self.hdrbalance_check = QCheckBox("HDR balance fix")
+        self.hdrbalance_check.setToolTip("Reduces HDR highlight blow-out by correcting Unity HDR output paper white and automatic tonemapping, plus URP bloom/color settings.")
         self.inspector_check = QCheckBox("Runtime UI inspector")
         self.inspector_check.setToolTip("Developer tool: exposes a localhost browser editor for active RectTransform UI elements.")
         self.canvas_check.setChecked(setting_bool(self.settings, "pluginCanvas", True))
         self.resize_check.setChecked(setting_bool(self.settings, "pluginResize", True))
         self.framepacing_check.setChecked(setting_bool(self.settings, "pluginFramePacing", True))
+        self.hdrbalance_check.setChecked(setting_bool(self.settings, "pluginHdrBalance", True))
         self.inspector_check.setChecked(setting_bool(self.settings, "pluginInspector", False))
         self.canvas_check.stateChanged.connect(self.save_plugin_selection)
         self.resize_check.stateChanged.connect(self.save_plugin_selection)
         self.framepacing_check.stateChanged.connect(self.save_plugin_selection)
+        self.hdrbalance_check.stateChanged.connect(self.save_plugin_selection)
         self.inspector_check.stateChanged.connect(self.save_plugin_selection)
         plugin_layout.addWidget(plugin_title)
         plugin_layout.addWidget(self.canvas_check)
         plugin_layout.addWidget(self.resize_check)
         plugin_layout.addWidget(self.framepacing_check)
+        plugin_layout.addWidget(self.hdrbalance_check)
         plugin_layout.addWidget(self.inspector_check)
         layout.addWidget(plugin_box)
 
@@ -466,6 +472,8 @@ class MainWindow(QMainWindow):
             selected.append("resize")
         if self.framepacing_check.isChecked():
             selected.append("framepacing")
+        if self.hdrbalance_check.isChecked():
+            selected.append("hdrbalance")
         if self.inspector_check.isChecked():
             selected.append("inspector")
         return selected
@@ -474,6 +482,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("pluginCanvas", self.canvas_check.isChecked())
         self.settings.setValue("pluginResize", self.resize_check.isChecked())
         self.settings.setValue("pluginFramePacing", self.framepacing_check.isChecked())
+        self.settings.setValue("pluginHdrBalance", self.hdrbalance_check.isChecked())
         self.settings.setValue("pluginInspector", self.inspector_check.isChecked())
 
     def refresh_status(self) -> None:
@@ -508,6 +517,7 @@ class MainWindow(QMainWindow):
                 "canvas": "LimbusCanvasFix.dll",
                 "resize": "LimbusWindowResizeFix.dll",
                 "framepacing": "LimbusFramePacingFix.dll",
+                "hdrbalance": "LimbusHdrBalanceFix.dll",
                 "inspector": "LimbusRuntimeUIInspector.dll",
             }
             expected = [plugin_files[name] for name in self.selected_plugins()]
@@ -669,7 +679,7 @@ class MainWindow(QMainWindow):
     def set_busy(self, busy: bool) -> None:
         self.progress.setRange(0, 0 if busy else 1)
         self.progress.setValue(0 if busy else 1)
-        for button in (self.install_btn, self.launch_btn, self.update_btn, self.canvas_check, self.resize_check, self.framepacing_check, self.inspector_check):
+        for button in (self.install_btn, self.launch_btn, self.update_btn, self.canvas_check, self.resize_check, self.framepacing_check, self.hdrbalance_check, self.inspector_check):
             button.setEnabled(not busy)
 
     def append_line(self, text: str) -> None:

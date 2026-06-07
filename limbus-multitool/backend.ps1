@@ -5,7 +5,7 @@ param(
 
     [string]$GameDir,
     [string]$PayloadRoot,
-    [string]$Plugins = 'canvas,resize,framepacing',
+    [string]$Plugins = 'canvas,resize,framepacing,hdrbalance',
     [string]$UpdateUrl,
     [string]$AppDir,
     [string]$Version,
@@ -187,6 +187,7 @@ function Require-InstallPayload {
         @('bin\Release\LimbusCanvasFix.dll', 'LimbusCanvasFix payload'),
         @('bin\Release\LimbusWindowResizeFix.dll', 'LimbusWindowResizeFix payload'),
         @('bin\Release\LimbusFramePacingFix.dll', 'LimbusFramePacingFix payload'),
+        @('bin\Release\LimbusHdrBalanceFix.dll', 'LimbusHdrBalanceFix payload'),
         @('bin\Release\LimbusRuntimeUIInspector.dll', 'LimbusRuntimeUIInspector payload'),
         @('tools\patch-libcpp\bin\Release\net6.0\PatchLibCpp.exe', 'PatchLibCpp executable'),
         @('tools\patch-libcpp\bin\Release\net6.0\PatchLibCpp.dll', 'PatchLibCpp assembly'),
@@ -395,6 +396,7 @@ function Assert-InstalledState([string[]]$Selected) {
         canvas = 'LimbusCanvasFix.dll'
         resize = 'LimbusWindowResizeFix.dll'
         framepacing = 'LimbusFramePacingFix.dll'
+        hdrbalance = 'LimbusHdrBalanceFix.dll'
         inspector = 'LimbusRuntimeUIInspector.dll'
     }
 
@@ -495,7 +497,7 @@ function Get-SelectedPlugins {
     foreach ($raw in ($Plugins -split ',')) {
         $name = $raw.Trim().ToLowerInvariant()
         if ([string]::IsNullOrWhiteSpace($name)) { continue }
-        if ($name -notin @('canvas','resize','framepacing','inspector')) {
+        if ($name -notin @('canvas','resize','framepacing','hdrbalance','inspector')) {
             Fail "Unknown plugin selection: $name"
         }
         if ($name -notin $selected) {
@@ -514,10 +516,11 @@ function Sync-SelectedPlugins([string[]]$Selected) {
         canvas = 'LimbusCanvasFix.dll'
         resize = 'LimbusWindowResizeFix.dll'
         framepacing = 'LimbusFramePacingFix.dll'
+        hdrbalance = 'LimbusHdrBalanceFix.dll'
         inspector = 'LimbusRuntimeUIInspector.dll'
     }
 
-    foreach ($key in @('canvas','resize','framepacing','inspector')) {
+    foreach ($key in @('canvas','resize','framepacing','hdrbalance','inspector')) {
         $dllName = $pluginMap[$key]
         $path = Join-Path $pluginDir $dllName
         if ($Selected -contains $key) {
@@ -553,6 +556,7 @@ function Invoke-Verify {
     Require-File (Join-Path $pluginDir 'LimbusCanvasFix.dll') 'LimbusCanvasFix plugin'
     Require-File (Join-Path $pluginDir 'LimbusWindowResizeFix.dll') 'LimbusWindowResizeFix plugin'
     Require-File (Join-Path $pluginDir 'LimbusFramePacingFix.dll') 'LimbusFramePacingFix plugin'
+    Require-File (Join-Path $pluginDir 'LimbusHdrBalanceFix.dll') 'LimbusHdrBalanceFix plugin'
 
     $logPath = Join-Path $GameDir 'BepInEx\LogOutput.log'
     Require-File $logPath 'BepInEx log'
@@ -576,6 +580,12 @@ function Invoke-Verify {
         Warn "FPS/frame pacing marker not found yet. Launch the game and wait for scene loading to complete."
     }
 
+    if ($log -match 'HDR output apply' -or $log -match 'HDR volume profile patched' -or $log -match 'LimbusHdrBalanceFix .* loaded') {
+        Info "HDR balance fix verified in log."
+    } else {
+        Warn "HDR balance marker not found yet. Launch the game and wait for scene loading to complete."
+    }
+
     $errors = Join-Path $GameDir 'BepInEx\ErrorLog.log'
     if ((Test-Path -LiteralPath $errors) -and (Get-Item -LiteralPath $errors).Length -gt 0) {
         Warn "BepInEx ErrorLog.log is not empty. Inspect it if the game did not start correctly."
@@ -586,7 +596,7 @@ function Invoke-Uninstall {
     Require-GameDir $GameDir
     Stop-GameIfRunning -Required
     $pluginDir = Get-PluginDir $GameDir
-    foreach ($name in @('LimbusCanvasFix.dll','LimbusWindowResizeFix.dll','LimbusFramePacingFix.dll','LimbusRuntimeUIInspector.dll')) {
+    foreach ($name in @('LimbusCanvasFix.dll','LimbusWindowResizeFix.dll','LimbusFramePacingFix.dll','LimbusHdrBalanceFix.dll','LimbusRuntimeUIInspector.dll')) {
         $path = Join-Path $pluginDir $name
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Force

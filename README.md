@@ -17,6 +17,7 @@ The Lethe team's source code was referenced as a starting point for patching the
 - `src/LimbusCanvasFix/` - ultrawide UI canvas fix plugin.
 - `src/LimbusWindowResizeFix/` - window resizing plugin.
 - `src/LimbusFramePacingFix/` - 240 FPS cap and maximized-window frame pacing plugin.
+- `src/LimbusHdrBalanceFix/` - HDR paper-white and URP bloom/color highlight balance plugin.
 - `src/LimbusRuntimeUIInspector/` - optional localhost runtime UI inspector for live RectTransform and Transform discovery/edits with stale-root pruning.
 - `tools/patch-libcpp/` - compatibility patcher for BepInEx IL2CPP tooling.
 - `tools/test-stock-cpp2il/` - local diagnostic harness for Cpp2IL behavior.
@@ -32,9 +33,12 @@ From the repository root:
 dotnet build .\src\LimbusCanvasFix\LimbusCanvasFix.csproj -c Release -p:SkipDeploy=true
 dotnet build .\src\LimbusWindowResizeFix\LimbusWindowResizeFix.csproj -c Release -p:SkipDeploy=true
 dotnet build .\src\LimbusFramePacingFix\LimbusFramePacingFix.csproj -c Release -p:SkipDeploy=true
+dotnet build .\src\LimbusHdrBalanceFix\LimbusHdrBalanceFix.csproj -c Release -p:SkipDeploy=true
 dotnet build .\src\LimbusRuntimeUIInspector\LimbusRuntimeUIInspector.csproj -c Release -p:SkipDeploy=true
 dotnet build .\tools\patch-libcpp\patch-libcpp.csproj -c Release
 ```
+
+The HDR balance plugin applies Unity HDR output paper-white and automatic HDR tonemapping corrections through native Unity HDR output bindings, then clamps URP bloom/color volume profiles when they are present.
 
 To build the end-user installer:
 
