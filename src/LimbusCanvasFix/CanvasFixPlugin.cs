@@ -16,7 +16,7 @@ namespace LimbusCanvasFix
     {
         public const string GUID    = "com.you.limbuscanvasfix";
         public const string NAME    = "LimbusCanvasFix";
-        public const string VERSION = "1.1.0";
+        public const string VERSION = "1.1.1";
 
         internal static new ManualLogSource Log = null!;
 
@@ -440,12 +440,13 @@ namespace LimbusCanvasFix
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Script]TabContentManager", anchoredXBySignMagnitude: 1000f),
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Script]SideButtonList", anchoredX: 335f),
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Image]UnitStatusPanel", width: 3625f),
+            new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Trigger]SkillSummaryPanel/[Script]SkillSummaryPanel", anchoredXWhenCurrentNegative: 250f),
         };
 
         private static readonly Dictionary<string, LayoutRule> rulesByPath = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, List<LayoutRule>> rulesByLeafName = new(StringComparer.Ordinal);
-        private static readonly Dictionary<IntPtr, LayoutRule> targetCache = new();
-        private static readonly HashSet<IntPtr> nonTargetNameCache = new();
+        private static readonly Dictionary<IntPtr, TargetCacheEntry> targetCache = new();
+        private static readonly Dictionary<IntPtr, int> nonTargetNameCache = new();
         private static readonly HashSet<IntPtr> scannedRoots = new();
         private static bool initialized;
         private static int appliedCount;
@@ -458,6 +459,7 @@ namespace LimbusCanvasFix
         private static IntPtr transformClass;
         private static IntPtr rectTransformClass;
         private static IntPtr objectGetName;
+        private static IntPtr objectGetInstanceId;
         private static IntPtr componentGetTransform;
         private static IntPtr transformGetParent;
         private static IntPtr transformGetChildCount;
@@ -555,13 +557,28 @@ namespace LimbusCanvasFix
 
         private static bool TryGetRule(IntPtr rectTransform, out LayoutRule rule)
         {
-            if (targetCache.TryGetValue(rectTransform, out rule!))
-                return true;
+            var instanceId = InvokeInt(objectGetInstanceId, rectTransform);
 
-            if (nonTargetNameCache.Contains(rectTransform))
+            if (targetCache.TryGetValue(rectTransform, out var cached))
             {
-                rule = null!;
-                return false;
+                if (cached.InstanceId == instanceId && PathMatchesRule(rectTransform, cached.Rule))
+                {
+                    rule = cached.Rule;
+                    return true;
+                }
+
+                targetCache.Remove(rectTransform);
+            }
+
+            if (nonTargetNameCache.TryGetValue(rectTransform, out var nonTargetInstanceId))
+            {
+                if (nonTargetInstanceId == instanceId)
+                {
+                    rule = null!;
+                    return false;
+                }
+
+                nonTargetNameCache.Remove(rectTransform);
             }
 
             try
@@ -571,7 +588,7 @@ namespace LimbusCanvasFix
                 {
                     if (nonTargetNameCache.Count >= MaxNonTargetNameCache)
                         nonTargetNameCache.Clear();
-                    nonTargetNameCache.Add(rectTransform);
+                    nonTargetNameCache[rectTransform] = instanceId;
                     rule = null!;
                     return false;
                 }
@@ -581,7 +598,7 @@ namespace LimbusCanvasFix
                 {
                     if (rulesByPath.TryGetValue(path, out var matched) && ReferenceEquals(matched, candidate))
                     {
-                        targetCache[rectTransform] = matched;
+                        targetCache[rectTransform] = new TargetCacheEntry(instanceId, path, matched);
                         rule = matched;
                         return true;
                     }
@@ -699,6 +716,23 @@ namespace LimbusCanvasFix
                 }
             }
 
+            if ((kind == LayoutWriteKind.Any || kind == LayoutWriteKind.AnchoredPosition) && rule.AnchoredXWhenCurrentNegative.HasValue)
+            {
+                var position = InvokeVector2(rectGetAnchoredPosition, rect);
+                if (position.X < -Epsilon)
+                {
+                    var targetX = rule.AnchoredXWhenCurrentNegative.Value;
+                    if (Math.Abs(position.X - targetX) > Epsilon)
+                    {
+                        var previous = position.X;
+                        position.X = targetX;
+                        InvokeSetVector2(rectSetAnchoredPosition, rect, position);
+                        details = $"anchoredPosition.x {previous:0.###}->{targetX:0.###}";
+                        changed = true;
+                    }
+                }
+            }
+
             if (changed)
             {
                 var count = ++appliedCount;
@@ -718,6 +752,7 @@ namespace LimbusCanvasFix
             rectTransformClass = RequireClass("UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform");
 
             objectGetName = RequireMethod(objectClass, "get_name", 0);
+            objectGetInstanceId = RequireMethod(objectClass, "GetInstanceID", 0);
             componentGetTransform = RequireMethod(componentClass, "get_transform", 0);
             transformGetParent = RequireMethod(transformClass, "get_parent", 0);
             transformGetChildCount = RequireMethod(transformClass, "get_childCount", 0);
@@ -745,6 +780,16 @@ namespace LimbusCanvasFix
 
             names.Reverse();
             return "/" + string.Join("/", names);
+        }
+
+        private static bool PathMatchesRule(IntPtr transform, LayoutRule rule)
+        {
+            var name = InvokeString(objectGetName, transform);
+            if (!string.Equals(name, rule.LeafName, StringComparison.Ordinal))
+                return false;
+
+            var currentPath = BuildPath(transform);
+            return string.Equals(currentPath, rule.Path, StringComparison.Ordinal);
         }
 
         private static IntPtr RequireClass(string assembly, string ns, string name)
@@ -814,18 +859,21 @@ namespace LimbusCanvasFix
 
     internal sealed class LayoutRule
     {
-        public LayoutRule(string path, float? width = null, float? anchoredXBySignMagnitude = null, float? anchoredX = null)
+        public LayoutRule(string path, float? width = null, float? anchoredXBySignMagnitude = null, float? anchoredX = null, float? anchoredXWhenCurrentNegative = null)
         {
             Path = path;
             LeafName = path[(path.LastIndexOf('/') + 1)..];
             Width = width;
             AnchoredXBySignMagnitude = anchoredXBySignMagnitude;
             AnchoredX = anchoredX;
+            AnchoredXWhenCurrentNegative = anchoredXWhenCurrentNegative;
             Description = width.HasValue
                 ? $"{path} width={width.Value}"
                 : anchoredX.HasValue
                     ? $"{path} anchoredX={anchoredX.Value}"
-                    : $"{path} anchoredX=+/-{anchoredXBySignMagnitude.GetValueOrDefault()}";
+                    : anchoredXWhenCurrentNegative.HasValue
+                        ? $"{path} anchoredXWhenCurrentNegative={anchoredXWhenCurrentNegative.Value}"
+                        : $"{path} anchoredX=+/-{anchoredXBySignMagnitude.GetValueOrDefault()}";
         }
 
         public string Path { get; }
@@ -833,7 +881,22 @@ namespace LimbusCanvasFix
         public float? Width { get; }
         public float? AnchoredXBySignMagnitude { get; }
         public float? AnchoredX { get; }
+        public float? AnchoredXWhenCurrentNegative { get; }
         public string Description { get; }
+    }
+
+    internal sealed class TargetCacheEntry
+    {
+        public TargetCacheEntry(int instanceId, string path, LayoutRule rule)
+        {
+            InstanceId = instanceId;
+            Path = path;
+            Rule = rule;
+        }
+
+        public int InstanceId { get; }
+        public string Path { get; }
+        public LayoutRule Rule { get; }
     }
 
     internal enum LayoutWriteKind
