@@ -16,7 +16,7 @@ The Lethe team's source code was referenced as a starting point for patching the
 
 - `src/LimbusCanvasFix/` - ultrawide UI canvas fix plugin.
 - `src/LimbusWindowResizeFix/` - window resizing plugin.
-- `src/LimbusFramePacingFix/` - 240 FPS cap and maximized-window frame pacing plugin.
+- `src/LimbusFramePacingFix/` - 240 FPS cap and frame pacing plugin.
 - `src/LimbusHdrBalanceFix/` - HDR paper-white and URP bloom/color highlight balance plugin.
 - `src/LimbusRuntimeUIInspector/` - optional localhost runtime UI inspector for live RectTransform and Transform discovery/edits with stale-root pruning.
 - `tools/patch-libcpp/` - compatibility patcher for BepInEx IL2CPP tooling.

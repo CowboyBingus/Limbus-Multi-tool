@@ -18,7 +18,7 @@ public sealed class Plugin : BasePlugin
 {
     public const string GUID = "com.you.limbusframepacingfix";
     public const string NAME = "LimbusFramePacingFix";
-    public const string VERSION = "0.4.0";
+    public const string VERSION = "0.4.1";
 
     internal static new ManualLogSource Log = null!;
     internal static ConfigEntry<bool> Enabled = null!;
@@ -26,6 +26,7 @@ public sealed class Plugin : BasePlugin
     internal static ConfigEntry<int> VSyncCount = null!;
     internal static ConfigEntry<bool> ForceMaximizedWindow = null!;
     internal static ConfigEntry<bool> RunInBackground = null!;
+    internal static ConfigEntry<bool> AllowDisplayModeChanges = null!;
     internal static ConfigEntry<bool> ForceOnDemandEveryFrame = null!;
     internal static ConfigEntry<int> MaxQueuedFrames = null!;
     internal static ConfigEntry<float> ReapplyIntervalSeconds = null!;
@@ -47,7 +48,7 @@ public sealed class Plugin : BasePlugin
         Log.LogInfo(
             $"{NAME} {VERSION} loaded. " +
             $"Enabled={Enabled.Value}, TargetFrameRate={TargetFrameRate.Value}, VSyncCount={VSyncCount.Value}, " +
-            $"ForceMaximizedWindow={ForceMaximizedWindow.Value}, RunInBackground={RunInBackground.Value}, " +
+            $"AllowDisplayModeChanges={AllowDisplayModeChanges.Value}, ForceMaximizedWindow={ForceMaximizedWindow.Value}, RunInBackground={RunInBackground.Value}, " +
             $"ForceOnDemandEveryFrame={ForceOnDemandEveryFrame.Value}, MaxQueuedFrames={MaxQueuedFrames.Value}, " +
             $"ApplyNativeUnitySettings={ApplyNativeUnitySettings.Value}, PatchGameFrameRateMethods={PatchGameFrameRateMethods.Value}, " +
             $"DumpMetadataOnLoad={DumpMetadataOnLoad.Value}.");
@@ -68,7 +69,8 @@ public sealed class Plugin : BasePlugin
         VSyncCount = Config.Bind("Frame pacing", "VSyncCount", 0, "Forced QualitySettings.vSyncCount. 0 disables Unity VSync so the explicit FPS cap is used.");
         ForceOnDemandEveryFrame = Config.Bind("Frame pacing", "ForceOnDemandEveryFrame", true, "Forces OnDemandRendering.renderFrameInterval to 1 so Unity does not intentionally skip renders.");
         MaxQueuedFrames = Config.Bind("Frame pacing", "MaxQueuedFrames", 1, "Forced QualitySettings.maxQueuedFrames. Use 0 to leave unchanged.");
-        ForceMaximizedWindow = Config.Bind("Display", "ForceMaximizedWindow", true, "Forces Screen.fullScreenMode to FullScreenWindow, Unity's borderless maximized window mode.");
+        AllowDisplayModeChanges = Config.Bind("Display", "AllowDisplayModeChanges", false, "Opt-in guard for settings that change Unity's display mode or window size. Leave false to preserve the user's selected window mode.");
+        ForceMaximizedWindow = Config.Bind("Display", "ForceMaximizedWindow", false, "When AllowDisplayModeChanges is true, forces Screen.fullScreenMode to FullScreenWindow, Unity's borderless maximized window mode.");
         RunInBackground = Config.Bind("Display", "RunInBackground", false, "Forced Application.runInBackground value.");
         ReapplyIntervalSeconds = Config.Bind("Diagnostics", "ReapplyIntervalSeconds", 0.25f, "How often the runtime enforcer checks and reapplies settings.");
         ApplyNativeUnitySettings = Config.Bind("Diagnostics", "ApplyNativeUnitySettings", true, "Experimental. Applies Unity settings through IL2CPP runtime invocation.");
@@ -79,6 +81,12 @@ public sealed class Plugin : BasePlugin
     internal static bool IsEnabled => Enabled != null && Enabled.Value;
     internal static bool ShouldApplyNativeUnitySettings => IsEnabled && ApplyNativeUnitySettings != null && ApplyNativeUnitySettings.Value;
     internal static bool ShouldPatchGameFrameRateMethods => IsEnabled && PatchGameFrameRateMethods != null && PatchGameFrameRateMethods.Value;
+    internal static bool ShouldForceMaximizedWindow =>
+        IsEnabled &&
+        AllowDisplayModeChanges != null &&
+        AllowDisplayModeChanges.Value &&
+        ForceMaximizedWindow != null &&
+        ForceMaximizedWindow.Value;
 }
 
 internal static class FramePacingEnforcer
@@ -165,7 +173,7 @@ internal static class FramePacingEnforcer
                 changes.Add($"runInBackground skipped: {runInBackgroundError}");
             }
 
-            if (Plugin.ForceMaximizedWindow.Value)
+            if (Plugin.ShouldForceMaximizedWindow)
             {
                 if (NativeUnitySettings.TrySetFullScreenMode(FullScreenWindowMode, out var fullScreenModeError))
                 {

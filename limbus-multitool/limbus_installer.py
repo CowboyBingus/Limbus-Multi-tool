@@ -392,7 +392,7 @@ class MainWindow(QMainWindow):
         self.resize_check = QCheckBox("Window resize fix")
         self.resize_check.setToolTip("Restores the resizable window border after the Unity engine upgrade.")
         self.framepacing_check = QCheckBox("FPS / frame pacing fix")
-        self.framepacing_check.setToolTip("Forces a 240 FPS cap, disables Unity v-sync, and keeps maximized window mode.")
+        self.framepacing_check.setToolTip("Forces a 240 FPS cap and disables Unity v-sync without changing the user's window size.")
         self.hdrbalance_check = QCheckBox("HDR balance fix")
         self.hdrbalance_check.setToolTip("Reduces HDR highlight blow-out by correcting Unity HDR output paper white and automatic tonemapping, plus URP bloom/color settings.")
         self.inspector_check = QCheckBox("Runtime UI inspector")
