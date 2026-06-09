@@ -16,7 +16,7 @@ namespace LimbusCanvasFix
     {
         public const string GUID    = "com.you.limbuscanvasfix";
         public const string NAME    = "LimbusCanvasFix";
-        public const string VERSION = "1.1.1";
+        public const string VERSION = "1.2.0";
 
         internal static new ManualLogSource Log = null!;
 
@@ -431,6 +431,10 @@ namespace LimbusCanvasFix
         private const int MaxPathDepth = 80;
         private const int MaxScanNodes = 6000;
         private const int MaxNonTargetNameCache = 32768;
+        private const float DesignScreenWidth = 3440f;
+        private const float DesignScreenHeight = 1492f;
+        private const float MinHorizontalScale = 0.25f;
+        private const float MaxHorizontalScale = 3.0f;
         private const float Epsilon = 0.01f;
 
         private static readonly LayoutRule[] rules =
@@ -468,6 +472,10 @@ namespace LimbusCanvasFix
         private static IntPtr rectSetAnchoredPosition;
         private static IntPtr rectGetSizeDelta;
         private static IntPtr rectSetSizeDelta;
+        private static IntPtr screenGetWidth;
+        private static IntPtr screenGetHeight;
+        private static int lastLoggedScaleWidth;
+        private static int lastLoggedScaleHeight;
 
         static LayoutRuleMaintainer()
         {
@@ -669,16 +677,17 @@ namespace LimbusCanvasFix
 
             var changed = false;
             var details = "";
+            var horizontalScale = GetHorizontalScale();
             if ((kind == LayoutWriteKind.Any || kind == LayoutWriteKind.SizeDelta) && rule.Width.HasValue)
             {
                 var size = InvokeVector2(rectGetSizeDelta, rect);
-                var targetWidth = rule.Width.Value;
+                var targetWidth = ScaleHorizontal(rule.Width.Value, horizontalScale);
                 if (Math.Abs(size.X - targetWidth) > Epsilon)
                 {
                     var previous = size.X;
                     size.X = targetWidth;
                     InvokeSetVector2(rectSetSizeDelta, rect, size);
-                    details = $"sizeDelta.x {previous:0.###}->{targetWidth:0.###}";
+                    details = $"sizeDelta.x {previous:0.###}->{targetWidth:0.###} scale={horizontalScale:0.###}";
                     changed = true;
                 }
             }
@@ -689,14 +698,14 @@ namespace LimbusCanvasFix
                 if (Math.Abs(position.X) > Epsilon)
                 {
                     var targetX = position.X < 0
-                        ? -rule.AnchoredXBySignMagnitude.Value
-                        : rule.AnchoredXBySignMagnitude.Value;
+                        ? -ScaleHorizontal(rule.AnchoredXBySignMagnitude.Value, horizontalScale)
+                        : ScaleHorizontal(rule.AnchoredXBySignMagnitude.Value, horizontalScale);
                     if (Math.Abs(position.X - targetX) > Epsilon)
                     {
                         var previous = position.X;
                         position.X = targetX;
                         InvokeSetVector2(rectSetAnchoredPosition, rect, position);
-                        details = $"anchoredPosition.x {previous:0.###}->{targetX:0.###}";
+                        details = $"anchoredPosition.x {previous:0.###}->{targetX:0.###} scale={horizontalScale:0.###}";
                         changed = true;
                     }
                 }
@@ -705,13 +714,13 @@ namespace LimbusCanvasFix
             if ((kind == LayoutWriteKind.Any || kind == LayoutWriteKind.AnchoredPosition) && rule.AnchoredX.HasValue)
             {
                 var position = InvokeVector2(rectGetAnchoredPosition, rect);
-                var targetX = rule.AnchoredX.Value;
+                var targetX = ScaleHorizontal(rule.AnchoredX.Value, horizontalScale);
                 if (Math.Abs(position.X - targetX) > Epsilon)
                 {
                     var previous = position.X;
                     position.X = targetX;
                     InvokeSetVector2(rectSetAnchoredPosition, rect, position);
-                    details = $"anchoredPosition.x {previous:0.###}->{targetX:0.###}";
+                    details = $"anchoredPosition.x {previous:0.###}->{targetX:0.###} scale={horizontalScale:0.###}";
                     changed = true;
                 }
             }
@@ -721,13 +730,13 @@ namespace LimbusCanvasFix
                 var position = InvokeVector2(rectGetAnchoredPosition, rect);
                 if (position.X < -Epsilon)
                 {
-                    var targetX = rule.AnchoredXWhenCurrentNegative.Value;
+                    var targetX = ScaleHorizontal(rule.AnchoredXWhenCurrentNegative.Value, horizontalScale);
                     if (Math.Abs(position.X - targetX) > Epsilon)
                     {
                         var previous = position.X;
                         position.X = targetX;
                         InvokeSetVector2(rectSetAnchoredPosition, rect, position);
-                        details = $"anchoredPosition.x {previous:0.###}->{targetX:0.###}";
+                        details = $"anchoredPosition.x {previous:0.###}->{targetX:0.###} scale={horizontalScale:0.###}";
                         changed = true;
                     }
                 }
@@ -750,6 +759,8 @@ namespace LimbusCanvasFix
             componentClass = RequireClass("UnityEngine.CoreModule.dll", "UnityEngine", "Component");
             transformClass = RequireClass("UnityEngine.CoreModule.dll", "UnityEngine", "Transform");
             rectTransformClass = RequireClass("UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform");
+            var screenClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "Screen");
+            var deviceScreenClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine.Device", "Screen");
 
             objectGetName = RequireMethod(objectClass, "get_name", 0);
             objectGetInstanceId = RequireMethod(objectClass, "GetInstanceID", 0);
@@ -761,9 +772,15 @@ namespace LimbusCanvasFix
             rectSetAnchoredPosition = RequireMethod(rectTransformClass, "set_anchoredPosition", 1);
             rectGetSizeDelta = RequireMethod(rectTransformClass, "get_sizeDelta", 0);
             rectSetSizeDelta = RequireMethod(rectTransformClass, "set_sizeDelta", 1);
+            screenGetWidth = FindOptionalMethod(screenClass, deviceScreenClass, "get_width", 0);
+            screenGetHeight = FindOptionalMethod(screenClass, deviceScreenClass, "get_height", 0);
 
             initialized = true;
             Plugin.Log.LogInfo("Layout maintainer resolved Unity RectTransform APIs.");
+            if (screenGetWidth != IntPtr.Zero && screenGetHeight != IntPtr.Zero)
+                Plugin.Log.LogInfo($"Layout maintainer will scale horizontal rules from {DesignScreenWidth:0}x{DesignScreenHeight:0} design aspect.");
+            else
+                Plugin.Log.LogWarning("Layout maintainer could not resolve Unity Screen width/height APIs; horizontal rules will use design values.");
         }
 
         private static string BuildPath(IntPtr transform)
@@ -792,6 +809,50 @@ namespace LimbusCanvasFix
             return string.Equals(currentPath, rule.Path, StringComparison.Ordinal);
         }
 
+        private static float GetHorizontalScale()
+        {
+            if (!TryGetScreenSize(out var width, out var height))
+                return 1f;
+
+            var designAspect = DesignScreenWidth / DesignScreenHeight;
+            var currentAspect = width / (float)height;
+            var scale = currentAspect / designAspect;
+            if (float.IsNaN(scale) || float.IsInfinity(scale) || scale <= 0f)
+                return 1f;
+
+            scale = Math.Clamp(scale, MinHorizontalScale, MaxHorizontalScale);
+            if (width != lastLoggedScaleWidth || height != lastLoggedScaleHeight)
+            {
+                lastLoggedScaleWidth = width;
+                lastLoggedScaleHeight = height;
+                Plugin.Log.LogInfo($"Layout maintainer horizontal scale={scale:0.###} for screen {width}x{height}.");
+            }
+
+            return scale;
+        }
+
+        private static float ScaleHorizontal(float value, float scale) => value * scale;
+
+        private static bool TryGetScreenSize(out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+            if (screenGetWidth == IntPtr.Zero || screenGetHeight == IntPtr.Zero)
+                return false;
+
+            try
+            {
+                width = InvokeInt(screenGetWidth, IntPtr.Zero);
+                height = InvokeInt(screenGetHeight, IntPtr.Zero);
+                return width > 0 && height > 0;
+            }
+            catch (Exception ex)
+            {
+                ReportFailure("screen size lookup", ex);
+                return false;
+            }
+        }
+
         private static IntPtr RequireClass(string assembly, string ns, string name)
         {
             var klass = IL2CPP.GetIl2CppClass(assembly, ns, name);
@@ -806,6 +867,19 @@ namespace LimbusCanvasFix
             if (method == IntPtr.Zero)
                 throw new MissingMethodException($"IL2CPP method not found: {name}/{args}");
             return method;
+        }
+
+        private static IntPtr FindOptionalMethod(IntPtr primaryClass, IntPtr fallbackClass, string name, int args)
+        {
+            var method = primaryClass == IntPtr.Zero
+                ? IntPtr.Zero
+                : IL2CPP.il2cpp_class_get_method_from_name(primaryClass, name, args);
+            if (method != IntPtr.Zero)
+                return method;
+
+            return fallbackClass == IntPtr.Zero
+                ? IntPtr.Zero
+                : IL2CPP.il2cpp_class_get_method_from_name(fallbackClass, name, args);
         }
 
         private static unsafe IntPtr InvokeObject(IntPtr method, IntPtr instance, void** args = null)
