@@ -16,7 +16,7 @@ namespace LimbusCanvasFix
     {
         public const string GUID    = "com.you.limbuscanvasfix";
         public const string NAME    = "LimbusCanvasFix";
-        public const string VERSION = "1.2.1";
+        public const string VERSION = "1.2.2";
 
         internal static new ManualLogSource Log = null!;
 
@@ -254,17 +254,20 @@ namespace LimbusCanvasFix
 
         private static NativeDetour? anchoredPositionDetour;
         private static NativeDetour? sizeDeltaDetour;
+        private static NativeDetour? pivotDetour;
         private static NativeDetour? localScaleDetour;
         private static SetVector2Delegate? anchoredPositionOriginal;
         private static SetVector2Delegate? sizeDeltaOriginal;
+        private static SetVector2Delegate? pivotOriginal;
         private static SetVector3Delegate? localScaleOriginal;
         private static readonly SetVector2Delegate anchoredPositionReplacement = AnchoredPositionReplacement;
         private static readonly SetVector2Delegate sizeDeltaReplacement = SizeDeltaReplacement;
+        private static readonly SetVector2Delegate pivotReplacement = PivotReplacement;
         private static readonly SetVector3Delegate localScaleReplacement = LocalScaleReplacement;
 
         public static void Install()
         {
-            if (anchoredPositionDetour != null || sizeDeltaDetour != null || localScaleDetour != null)
+            if (anchoredPositionDetour != null || sizeDeltaDetour != null || pivotDetour != null || localScaleDetour != null)
                 return;
 
             var rectClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform");
@@ -288,6 +291,13 @@ namespace LimbusCanvasFix
                     ref sizeDeltaDetour,
                     ref sizeDeltaOriginal,
                     "RectTransform.set_sizeDelta");
+                InstallOne(
+                    rectClass,
+                    "set_pivot",
+                    pivotReplacement,
+                    ref pivotDetour,
+                    ref pivotOriginal,
+                    "RectTransform.set_pivot");
             }
 
             var transformClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "Transform");
@@ -311,6 +321,7 @@ namespace LimbusCanvasFix
         {
             Free(ref anchoredPositionDetour, ref anchoredPositionOriginal);
             Free(ref sizeDeltaDetour, ref sizeDeltaOriginal);
+            Free(ref pivotDetour, ref pivotOriginal);
             Free(ref localScaleDetour, ref localScaleOriginal);
         }
 
@@ -387,6 +398,20 @@ namespace LimbusCanvasFix
             catch (Exception ex)
             {
                 LayoutRuleMaintainer.ReportHookFailure("sizeDelta write hook", ex);
+            }
+        }
+
+        private static void PivotReplacement(IntPtr self, Vector2Value value, IntPtr methodInfo)
+        {
+            pivotOriginal?.Invoke(self, value, methodInfo);
+            try
+            {
+                if (!LayoutRuleMaintainer.IsApplying)
+                    LayoutRuleMaintainer.ApplyIfTarget(self, LayoutWriteKind.Pivot);
+            }
+            catch (Exception ex)
+            {
+                LayoutRuleMaintainer.ReportHookFailure("pivot write hook", ex);
             }
         }
 
@@ -479,8 +504,8 @@ namespace LimbusCanvasFix
         private static readonly LayoutRule[] rules =
         {
             new("/[Script]LoginSceneManager/[Canvas]/[Image]TouchToStart", width: -3000f),
-            new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Rect]UnitStatusContent", anchoredXBySignMagnitude: 900f),
-            new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Script]TabContentManager", anchoredXBySignMagnitude: 1000f),
+            new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Rect]UnitStatusContent", anchoredXBySignMagnitude: 900f, pivotXWhenPositive: 0.55f, pivotXWhenNegative: 0.4f),
+            new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Script]TabContentManager", anchoredXBySignMagnitude: 1000f, pivotXWhenPositive: 0.55f, pivotXWhenNegative: 0.4f),
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Script]SideButtonList", anchoredX: 335f),
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Image]UnitStatusPanel", width: 3625f),
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Trigger]SkillSummaryPanel/[Script]SkillSummaryPanel", anchoredXWhenCurrentNegative: 250f),
@@ -510,6 +535,8 @@ namespace LimbusCanvasFix
         private static IntPtr rectSetAnchoredPosition;
         private static IntPtr rectGetSizeDelta;
         private static IntPtr rectSetSizeDelta;
+        private static IntPtr rectGetPivot;
+        private static IntPtr rectSetPivot;
         private static IntPtr screenGetWidth;
         private static IntPtr screenGetHeight;
         private static int lastLoggedScaleWidth;
@@ -746,6 +773,29 @@ namespace LimbusCanvasFix
                 }
             }
 
+            if ((kind == LayoutWriteKind.Any || kind == LayoutWriteKind.Pivot) && rule.HasSidePivot)
+            {
+                var position = InvokeVector2(rectGetAnchoredPosition, rect);
+                var targetPivotX = position.X < -Epsilon
+                    ? rule.PivotXWhenNegative
+                    : position.X > Epsilon
+                        ? rule.PivotXWhenPositive
+                        : null;
+
+                if (targetPivotX.HasValue)
+                {
+                    var pivot = InvokeVector2(rectGetPivot, rect);
+                    if (Math.Abs(pivot.X - targetPivotX.Value) > Epsilon)
+                    {
+                        var previous = pivot.X;
+                        pivot.X = targetPivotX.Value;
+                        InvokeSetVector2(rectSetPivot, rect, pivot);
+                        details = $"pivot.x {previous:0.###}->{targetPivotX.Value:0.###}";
+                        changed = true;
+                    }
+                }
+            }
+
             if ((kind == LayoutWriteKind.Any || kind == LayoutWriteKind.LocalScale) && rule.ScaleXYMax.HasValue)
             {
                 var scale = InvokeVector3(transformGetLocalScale, rect);
@@ -794,6 +844,8 @@ namespace LimbusCanvasFix
             rectSetAnchoredPosition = RequireMethod(rectTransformClass, "set_anchoredPosition", 1);
             rectGetSizeDelta = RequireMethod(rectTransformClass, "get_sizeDelta", 0);
             rectSetSizeDelta = RequireMethod(rectTransformClass, "set_sizeDelta", 1);
+            rectGetPivot = RequireMethod(rectTransformClass, "get_pivot", 0);
+            rectSetPivot = RequireMethod(rectTransformClass, "set_pivot", 1);
             screenGetWidth = FindOptionalMethod(screenClass, deviceScreenClass, "get_width", 0);
             screenGetHeight = FindOptionalMethod(screenClass, deviceScreenClass, "get_height", 0);
 
@@ -988,7 +1040,7 @@ namespace LimbusCanvasFix
 
     internal sealed class LayoutRule
     {
-        public LayoutRule(string path, float? width = null, float? anchoredXBySignMagnitude = null, float? anchoredX = null, float? anchoredXWhenCurrentNegative = null, float? scaleXYMax = null)
+        public LayoutRule(string path, float? width = null, float? anchoredXBySignMagnitude = null, float? anchoredX = null, float? anchoredXWhenCurrentNegative = null, float? scaleXYMax = null, float? pivotXWhenPositive = null, float? pivotXWhenNegative = null)
         {
             Path = path;
             LeafName = path[(path.LastIndexOf('/') + 1)..];
@@ -997,6 +1049,8 @@ namespace LimbusCanvasFix
             AnchoredX = anchoredX;
             AnchoredXWhenCurrentNegative = anchoredXWhenCurrentNegative;
             ScaleXYMax = scaleXYMax;
+            PivotXWhenPositive = pivotXWhenPositive;
+            PivotXWhenNegative = pivotXWhenNegative;
             Description = width.HasValue
                 ? $"{path} width={width.Value}"
                 : anchoredX.HasValue
@@ -1005,7 +1059,9 @@ namespace LimbusCanvasFix
                         ? $"{path} anchoredXWhenCurrentNegative={anchoredXWhenCurrentNegative.Value}"
                         : scaleXYMax.HasValue
                             ? $"{path} scaleXYMax={scaleXYMax.Value}"
-                            : $"{path} anchoredX=+/-{anchoredXBySignMagnitude.GetValueOrDefault()}";
+                            : anchoredXBySignMagnitude.HasValue
+                                ? $"{path} anchoredX=+/-{anchoredXBySignMagnitude.Value}"
+                                : $"{path} pivotX={pivotXWhenPositive.GetValueOrDefault():0.###}/{pivotXWhenNegative.GetValueOrDefault():0.###}";
         }
 
         public string Path { get; }
@@ -1015,6 +1071,9 @@ namespace LimbusCanvasFix
         public float? AnchoredX { get; }
         public float? AnchoredXWhenCurrentNegative { get; }
         public float? ScaleXYMax { get; }
+        public float? PivotXWhenPositive { get; }
+        public float? PivotXWhenNegative { get; }
+        public bool HasSidePivot => PivotXWhenPositive.HasValue && PivotXWhenNegative.HasValue;
         public string Description { get; }
     }
 
@@ -1023,6 +1082,7 @@ namespace LimbusCanvasFix
         Any,
         AnchoredPosition,
         SizeDelta,
+        Pivot,
         LocalScale,
     }
 
