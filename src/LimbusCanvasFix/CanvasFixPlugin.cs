@@ -16,7 +16,7 @@ namespace LimbusCanvasFix
     {
         public const string GUID    = "com.you.limbuscanvasfix";
         public const string NAME    = "LimbusCanvasFix";
-        public const string VERSION = "1.2.0";
+        public const string VERSION = "1.2.1";
 
         internal static new ManualLogSource Log = null!;
 
@@ -249,54 +249,79 @@ namespace LimbusCanvasFix
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate void SetVector2Delegate(IntPtr self, Vector2Value value, IntPtr methodInfo);
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void SetVector3Delegate(IntPtr self, Vector3Value value, IntPtr methodInfo);
+
         private static NativeDetour? anchoredPositionDetour;
         private static NativeDetour? sizeDeltaDetour;
+        private static NativeDetour? localScaleDetour;
         private static SetVector2Delegate? anchoredPositionOriginal;
         private static SetVector2Delegate? sizeDeltaOriginal;
+        private static SetVector3Delegate? localScaleOriginal;
         private static readonly SetVector2Delegate anchoredPositionReplacement = AnchoredPositionReplacement;
         private static readonly SetVector2Delegate sizeDeltaReplacement = SizeDeltaReplacement;
+        private static readonly SetVector3Delegate localScaleReplacement = LocalScaleReplacement;
 
         public static void Install()
         {
-            if (anchoredPositionDetour != null || sizeDeltaDetour != null)
+            if (anchoredPositionDetour != null || sizeDeltaDetour != null || localScaleDetour != null)
                 return;
 
-            var klass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform");
-            if (klass == IntPtr.Zero)
+            var rectClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform");
+            if (rectClass == IntPtr.Zero)
             {
                 Plugin.Log.LogWarning("Layout write maintainer skipped: UnityEngine.RectTransform class was not resolved.");
-                return;
+            }
+            else
+            {
+                InstallOne(
+                    rectClass,
+                    "set_anchoredPosition",
+                    anchoredPositionReplacement,
+                    ref anchoredPositionDetour,
+                    ref anchoredPositionOriginal,
+                    "RectTransform.set_anchoredPosition");
+                InstallOne(
+                    rectClass,
+                    "set_sizeDelta",
+                    sizeDeltaReplacement,
+                    ref sizeDeltaDetour,
+                    ref sizeDeltaOriginal,
+                    "RectTransform.set_sizeDelta");
             }
 
-            InstallOne(
-                klass,
-                "set_anchoredPosition",
-                anchoredPositionReplacement,
-                ref anchoredPositionDetour,
-                ref anchoredPositionOriginal,
-                "RectTransform.set_anchoredPosition");
-            InstallOne(
-                klass,
-                "set_sizeDelta",
-                sizeDeltaReplacement,
-                ref sizeDeltaDetour,
-                ref sizeDeltaOriginal,
-                "RectTransform.set_sizeDelta");
+            var transformClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "Transform");
+            if (transformClass == IntPtr.Zero)
+            {
+                Plugin.Log.LogWarning("Layout write maintainer skipped: UnityEngine.Transform class was not resolved.");
+            }
+            else
+            {
+                InstallOne(
+                    transformClass,
+                    "set_localScale",
+                    localScaleReplacement,
+                    ref localScaleDetour,
+                    ref localScaleOriginal,
+                    "Transform.set_localScale");
+            }
         }
 
         public static void Uninstall()
         {
             Free(ref anchoredPositionDetour, ref anchoredPositionOriginal);
             Free(ref sizeDeltaDetour, ref sizeDeltaOriginal);
+            Free(ref localScaleDetour, ref localScaleOriginal);
         }
 
-        private static void InstallOne(
+        private static void InstallOne<T>(
             IntPtr klass,
             string methodName,
-            SetVector2Delegate replacement,
+            T replacement,
             ref NativeDetour? detour,
-            ref SetVector2Delegate? original,
+            ref T? original,
             string label)
+            where T : Delegate
         {
             var method = IL2CPP.il2cpp_class_get_method_from_name(klass, methodName, 1);
             if (method == IntPtr.Zero)
@@ -313,12 +338,13 @@ namespace LimbusCanvasFix
             }
 
             detour = new NativeDetour(methodPointer, replacement);
-            original = detour.GenerateTrampoline<SetVector2Delegate>();
+            original = detour.GenerateTrampoline<T>();
             detour.Apply();
             Plugin.Log.LogInfo($"Layout write maintainer installed {label} at {Ptr(methodPointer)}.");
         }
 
-        private static void Free(ref NativeDetour? detour, ref SetVector2Delegate? original)
+        private static void Free<T>(ref NativeDetour? detour, ref T? original)
+            where T : Delegate
         {
             try
             {
@@ -361,6 +387,20 @@ namespace LimbusCanvasFix
             catch (Exception ex)
             {
                 LayoutRuleMaintainer.ReportHookFailure("sizeDelta write hook", ex);
+            }
+        }
+
+        private static void LocalScaleReplacement(IntPtr self, Vector3Value value, IntPtr methodInfo)
+        {
+            localScaleOriginal?.Invoke(self, value, methodInfo);
+            try
+            {
+                if (!LayoutRuleMaintainer.IsApplying)
+                    LayoutRuleMaintainer.ApplyIfTarget(self, LayoutWriteKind.LocalScale);
+            }
+            catch (Exception ex)
+            {
+                LayoutRuleMaintainer.ReportHookFailure("localScale write hook", ex);
             }
         }
 
@@ -430,7 +470,6 @@ namespace LimbusCanvasFix
     {
         private const int MaxPathDepth = 80;
         private const int MaxScanNodes = 6000;
-        private const int MaxNonTargetNameCache = 32768;
         private const float DesignScreenWidth = 3440f;
         private const float DesignScreenHeight = 1492f;
         private const float MinHorizontalScale = 0.25f;
@@ -445,13 +484,11 @@ namespace LimbusCanvasFix
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Script]SideButtonList", anchoredX: 335f),
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Image]UnitStatusPanel", width: 3625f),
             new("/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Trigger]SkillSummaryPanel/[Script]SkillSummaryPanel", anchoredXWhenCurrentNegative: 250f),
+            new("/[Canvas]RatioMainUI/[Rect]PanelRoot/[UIPanel]RecordMemory_MainEvent(Clone)/[Rect]BG", scaleXYMax: 1.25f),
         };
 
         private static readonly Dictionary<string, LayoutRule> rulesByPath = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, List<LayoutRule>> rulesByLeafName = new(StringComparer.Ordinal);
-        private static readonly Dictionary<IntPtr, TargetCacheEntry> targetCache = new();
-        private static readonly Dictionary<IntPtr, int> nonTargetNameCache = new();
-        private static readonly HashSet<IntPtr> scannedRoots = new();
         private static bool initialized;
         private static int appliedCount;
         private static int failureCount;
@@ -463,11 +500,12 @@ namespace LimbusCanvasFix
         private static IntPtr transformClass;
         private static IntPtr rectTransformClass;
         private static IntPtr objectGetName;
-        private static IntPtr objectGetInstanceId;
         private static IntPtr componentGetTransform;
         private static IntPtr transformGetParent;
         private static IntPtr transformGetChildCount;
         private static IntPtr transformGetChild;
+        private static IntPtr transformGetLocalScale;
+        private static IntPtr transformSetLocalScale;
         private static IntPtr rectGetAnchoredPosition;
         private static IntPtr rectSetAnchoredPosition;
         private static IntPtr rectGetSizeDelta;
@@ -494,9 +532,6 @@ namespace LimbusCanvasFix
 
         public static void Reset()
         {
-            targetCache.Clear();
-            nonTargetNameCache.Clear();
-            scannedRoots.Clear();
             appliedCount = 0;
             failureCount = 0;
             scanCount = 0;
@@ -516,14 +551,11 @@ namespace LimbusCanvasFix
                 if (transform == IntPtr.Zero)
                     return;
 
-                if (!scannedRoots.Add(transform))
-                    return;
-
                 var visited = 0;
                 ScanSubtree(transform, ref visited);
                 var count = ++scanCount;
                 if (count <= 12 || count % 100 == 0)
-                    Plugin.Log.LogInfo($"Layout maintainer scanned CanvasScaler root #{count}: visited={visited}, cachedTargets={targetCache.Count}.");
+                    Plugin.Log.LogInfo($"Layout maintainer scanned CanvasScaler root #{count}: visited={visited}.");
             }
             catch (Exception ex)
             {
@@ -565,38 +597,11 @@ namespace LimbusCanvasFix
 
         private static bool TryGetRule(IntPtr rectTransform, out LayoutRule rule)
         {
-            var instanceId = InvokeInt(objectGetInstanceId, rectTransform);
-
-            if (targetCache.TryGetValue(rectTransform, out var cached))
-            {
-                if (cached.InstanceId == instanceId && PathMatchesRule(rectTransform, cached.Rule))
-                {
-                    rule = cached.Rule;
-                    return true;
-                }
-
-                targetCache.Remove(rectTransform);
-            }
-
-            if (nonTargetNameCache.TryGetValue(rectTransform, out var nonTargetInstanceId))
-            {
-                if (nonTargetInstanceId == instanceId)
-                {
-                    rule = null!;
-                    return false;
-                }
-
-                nonTargetNameCache.Remove(rectTransform);
-            }
-
             try
             {
                 var name = InvokeString(objectGetName, rectTransform);
                 if (!rulesByLeafName.TryGetValue(name, out var candidates))
                 {
-                    if (nonTargetNameCache.Count >= MaxNonTargetNameCache)
-                        nonTargetNameCache.Clear();
-                    nonTargetNameCache[rectTransform] = instanceId;
                     rule = null!;
                     return false;
                 }
@@ -606,7 +611,6 @@ namespace LimbusCanvasFix
                 {
                     if (rulesByPath.TryGetValue(path, out var matched) && ReferenceEquals(matched, candidate))
                     {
-                        targetCache[rectTransform] = new TargetCacheEntry(instanceId, path, matched);
                         rule = matched;
                         return true;
                     }
@@ -742,6 +746,23 @@ namespace LimbusCanvasFix
                 }
             }
 
+            if ((kind == LayoutWriteKind.Any || kind == LayoutWriteKind.LocalScale) && rule.ScaleXYMax.HasValue)
+            {
+                var scale = InvokeVector3(transformGetLocalScale, rect);
+                var windowScale = GetUniformWindowScale();
+                var targetScale = ScaleFromOneToMax(rule.ScaleXYMax.Value, windowScale);
+                if (Math.Abs(scale.X - targetScale) > Epsilon || Math.Abs(scale.Y - targetScale) > Epsilon)
+                {
+                    var previousX = scale.X;
+                    var previousY = scale.Y;
+                    scale.X = targetScale;
+                    scale.Y = targetScale;
+                    InvokeSetVector3(transformSetLocalScale, rect, scale);
+                    details = $"localScale.xy ({previousX:0.###},{previousY:0.###})->{targetScale:0.###} windowScale={windowScale:0.###}";
+                    changed = true;
+                }
+            }
+
             if (changed)
             {
                 var count = ++appliedCount;
@@ -763,11 +784,12 @@ namespace LimbusCanvasFix
             var deviceScreenClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine.Device", "Screen");
 
             objectGetName = RequireMethod(objectClass, "get_name", 0);
-            objectGetInstanceId = RequireMethod(objectClass, "GetInstanceID", 0);
             componentGetTransform = RequireMethod(componentClass, "get_transform", 0);
             transformGetParent = RequireMethod(transformClass, "get_parent", 0);
             transformGetChildCount = RequireMethod(transformClass, "get_childCount", 0);
             transformGetChild = RequireMethod(transformClass, "GetChild", 1);
+            transformGetLocalScale = RequireMethod(transformClass, "get_localScale", 0);
+            transformSetLocalScale = RequireMethod(transformClass, "set_localScale", 1);
             rectGetAnchoredPosition = RequireMethod(rectTransformClass, "get_anchoredPosition", 0);
             rectSetAnchoredPosition = RequireMethod(rectTransformClass, "set_anchoredPosition", 1);
             rectGetSizeDelta = RequireMethod(rectTransformClass, "get_sizeDelta", 0);
@@ -832,6 +854,26 @@ namespace LimbusCanvasFix
         }
 
         private static float ScaleHorizontal(float value, float scale) => value * scale;
+
+        private static float GetUniformWindowScale()
+        {
+            if (!TryGetScreenSize(out var width, out var height))
+                return 1f;
+
+            var scale = Math.Min(width / DesignScreenWidth, height / DesignScreenHeight);
+            if (float.IsNaN(scale) || float.IsInfinity(scale) || scale <= 0f)
+                return 1f;
+
+            return Math.Clamp(scale, 0f, 1f);
+        }
+
+        private static float ScaleFromOneToMax(float maxValue, float scale)
+        {
+            if (maxValue <= 1f)
+                return maxValue;
+
+            return 1f + ((maxValue - 1f) * scale);
+        }
 
         private static bool TryGetScreenSize(out int width, out int height)
         {
@@ -916,7 +958,20 @@ namespace LimbusCanvasFix
             return Marshal.PtrToStructure<Vector2Value>(IL2CPP.il2cpp_object_unbox(result));
         }
 
+        private static Vector3Value InvokeVector3(IntPtr method, IntPtr instance)
+        {
+            var result = InvokeObject(method, instance);
+            return Marshal.PtrToStructure<Vector3Value>(IL2CPP.il2cpp_object_unbox(result));
+        }
+
         private static unsafe void InvokeSetVector2(IntPtr method, IntPtr instance, Vector2Value value)
+        {
+            var args = stackalloc void*[1];
+            args[0] = &value;
+            InvokeObject(method, instance, args);
+        }
+
+        private static unsafe void InvokeSetVector3(IntPtr method, IntPtr instance, Vector3Value value)
         {
             var args = stackalloc void*[1];
             args[0] = &value;
@@ -933,7 +988,7 @@ namespace LimbusCanvasFix
 
     internal sealed class LayoutRule
     {
-        public LayoutRule(string path, float? width = null, float? anchoredXBySignMagnitude = null, float? anchoredX = null, float? anchoredXWhenCurrentNegative = null)
+        public LayoutRule(string path, float? width = null, float? anchoredXBySignMagnitude = null, float? anchoredX = null, float? anchoredXWhenCurrentNegative = null, float? scaleXYMax = null)
         {
             Path = path;
             LeafName = path[(path.LastIndexOf('/') + 1)..];
@@ -941,13 +996,16 @@ namespace LimbusCanvasFix
             AnchoredXBySignMagnitude = anchoredXBySignMagnitude;
             AnchoredX = anchoredX;
             AnchoredXWhenCurrentNegative = anchoredXWhenCurrentNegative;
+            ScaleXYMax = scaleXYMax;
             Description = width.HasValue
                 ? $"{path} width={width.Value}"
                 : anchoredX.HasValue
                     ? $"{path} anchoredX={anchoredX.Value}"
                     : anchoredXWhenCurrentNegative.HasValue
                         ? $"{path} anchoredXWhenCurrentNegative={anchoredXWhenCurrentNegative.Value}"
-                        : $"{path} anchoredX=+/-{anchoredXBySignMagnitude.GetValueOrDefault()}";
+                        : scaleXYMax.HasValue
+                            ? $"{path} scaleXYMax={scaleXYMax.Value}"
+                            : $"{path} anchoredX=+/-{anchoredXBySignMagnitude.GetValueOrDefault()}";
         }
 
         public string Path { get; }
@@ -956,21 +1014,8 @@ namespace LimbusCanvasFix
         public float? AnchoredXBySignMagnitude { get; }
         public float? AnchoredX { get; }
         public float? AnchoredXWhenCurrentNegative { get; }
+        public float? ScaleXYMax { get; }
         public string Description { get; }
-    }
-
-    internal sealed class TargetCacheEntry
-    {
-        public TargetCacheEntry(int instanceId, string path, LayoutRule rule)
-        {
-            InstanceId = instanceId;
-            Path = path;
-            Rule = rule;
-        }
-
-        public int InstanceId { get; }
-        public string Path { get; }
-        public LayoutRule Rule { get; }
     }
 
     internal enum LayoutWriteKind
@@ -978,6 +1023,7 @@ namespace LimbusCanvasFix
         Any,
         AnchoredPosition,
         SizeDelta,
+        LocalScale,
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -985,5 +1031,13 @@ namespace LimbusCanvasFix
     {
         public float X;
         public float Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Vector3Value
+    {
+        public float X;
+        public float Y;
+        public float Z;
     }
 }
