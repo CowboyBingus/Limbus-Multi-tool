@@ -3,11 +3,14 @@ using BepInEx.Unity.IL2CPP;
 using BepInEx.Logging;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
+using LimbusShared;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Linq;
+using static LimbusShared.Il2CppLookup;
+using static LimbusShared.NativeInterop;
 
 namespace LimbusCanvasFix
 {
@@ -143,20 +146,7 @@ namespace LimbusCanvasFix
 
         public static void Uninstall()
         {
-            try
-            {
-                detour?.Undo();
-                detour?.Free();
-            }
-            catch
-            {
-                // Unload can race Unity teardown.
-            }
-            finally
-            {
-                detour = null;
-                original = null;
-            }
+            DetourLifecycle.Free(ref detour, ref original);
         }
 
         private static void OnEnableReplacement(IntPtr self, IntPtr methodInfo)
@@ -166,7 +156,6 @@ namespace LimbusCanvasFix
             LayoutRuleMaintainer.ObserveCanvasScaler(self);
         }
 
-        private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
     }
 
     internal static class RectTransformLayoutDetour
@@ -213,20 +202,7 @@ namespace LimbusCanvasFix
 
         public static void Uninstall()
         {
-            try
-            {
-                detour?.Undo();
-                detour?.Free();
-            }
-            catch
-            {
-                // Unload can race Unity teardown.
-            }
-            finally
-            {
-                detour = null;
-                original = null;
-            }
+            DetourLifecycle.Free(ref detour, ref original);
         }
 
         private static void Replacement(IntPtr rectTransform, IntPtr methodInfo)
@@ -253,7 +229,6 @@ namespace LimbusCanvasFix
             }
         }
 
-        private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
     }
 
     internal static class RectTransformWriteDetours
@@ -321,9 +296,9 @@ namespace LimbusCanvasFix
 
         public static void Uninstall()
         {
-            Free(ref anchoredPositionDetour, ref anchoredPositionOriginal);
-            Free(ref sizeDeltaDetour, ref sizeDeltaOriginal);
-            Free(ref localScaleDetour, ref localScaleOriginal);
+            DetourLifecycle.Free(ref anchoredPositionDetour, ref anchoredPositionOriginal);
+            DetourLifecycle.Free(ref sizeDeltaDetour, ref sizeDeltaOriginal);
+            DetourLifecycle.Free(ref localScaleDetour, ref localScaleOriginal);
         }
 
         private static void InstallOne<T>(
@@ -353,25 +328,6 @@ namespace LimbusCanvasFix
             original = detour.GenerateTrampoline<T>();
             detour.Apply();
             Plugin.Log.LogInfo($"Layout write maintainer installed {label} at {Ptr(methodPointer)}.");
-        }
-
-        private static void Free<T>(ref NativeDetour? detour, ref T? original)
-            where T : Delegate
-        {
-            try
-            {
-                detour?.Undo();
-                detour?.Free();
-            }
-            catch
-            {
-                // Unload can race Unity teardown.
-            }
-            finally
-            {
-                detour = null;
-                original = null;
-            }
         }
 
         private static void AnchoredPositionReplacement(IntPtr self, Vector2Value value, IntPtr methodInfo)
@@ -416,7 +372,6 @@ namespace LimbusCanvasFix
             }
         }
 
-        private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
     }
 
     internal static class NativeCanvasScaler
@@ -559,7 +514,7 @@ namespace LimbusCanvasFix
             try
             {
                 EnsureInitialized();
-                var transform = InvokeObject(componentGetTransform, canvasScaler);
+                var transform = Il2CppInvoke.Object(componentGetTransform, canvasScaler);
                 if (transform == IntPtr.Zero)
                     return;
 
@@ -611,7 +566,7 @@ namespace LimbusCanvasFix
         {
             try
             {
-                var name = InvokeString(objectGetName, rectTransform);
+                var name = Il2CppInvoke.String(objectGetName, rectTransform);
                 if (!rulesByLeafName.TryGetValue(name, out var candidates))
                 {
                     rule = null!;
@@ -658,32 +613,17 @@ namespace LimbusCanvasFix
                 }
             }
 
-            var childCount = InvokeInt(transformGetChildCount, transform);
+            var childCount = Il2CppInvoke.Int32(transformGetChildCount, transform);
             for (var i = 0; i < childCount && visited < MaxScanNodes; i++)
             {
-                var child = InvokeObjectIntArg(transformGetChild, transform, i);
+                var child = Il2CppInvoke.ObjectWithIntArg(transformGetChild, transform, i);
                 ScanSubtree(child, ref visited);
             }
         }
 
         private static bool IsRectTransformObject(IntPtr obj)
         {
-            if (obj == IntPtr.Zero)
-                return false;
-
-            try
-            {
-                var klass = IL2CPP.il2cpp_object_get_class(obj);
-                if (klass == rectTransformClass)
-                    return true;
-
-                var name = Marshal.PtrToStringAnsi(IL2CPP.il2cpp_class_get_name(klass)) ?? "";
-                return name == "RectTransform";
-            }
-            catch
-            {
-                return false;
-            }
+            return Il2CppLookup.IsObjectClassOrNamed(obj, rectTransformClass, "RectTransform");
         }
 
         private static void ApplyRule(LayoutRule rule, IntPtr rect, LayoutWriteKind kind)
@@ -707,14 +647,14 @@ namespace LimbusCanvasFix
             if (!ShouldApply(kind, LayoutWriteKind.SizeDelta) || !rule.Width.HasValue)
                 return;
 
-            var size = InvokeVector2(rectGetSizeDelta, rect);
+            var size = Il2CppInvoke.Struct<Vector2Value>(rectGetSizeDelta, rect);
             var targetWidth = ScaleHorizontal(rule.Width.Value, horizontalScale);
             if (Math.Abs(size.X - targetWidth) <= Epsilon)
                 return;
 
             var previous = size.X;
             size.X = targetWidth;
-            InvokeSetVector2(rectSetSizeDelta, rect, size);
+            Il2CppInvoke.SetStruct(rectSetSizeDelta, rect, size);
             details.Add($"sizeDelta.x {previous:0.###}->{targetWidth:0.###} scale={horizontalScale:0.###}");
         }
 
@@ -723,7 +663,7 @@ namespace LimbusCanvasFix
             if (!ShouldApply(kind, LayoutWriteKind.AnchoredPosition) || !rule.AnchoredXBySignMagnitude.HasValue)
                 return;
 
-            var position = InvokeVector2(rectGetAnchoredPosition, rect);
+            var position = Il2CppInvoke.Struct<Vector2Value>(rectGetAnchoredPosition, rect);
             if (Math.Abs(position.X) <= Epsilon)
                 return;
 
@@ -737,7 +677,7 @@ namespace LimbusCanvasFix
             if (!ShouldApply(kind, LayoutWriteKind.AnchoredPosition) || !rule.AnchoredX.HasValue)
                 return;
 
-            var position = InvokeVector2(rectGetAnchoredPosition, rect);
+            var position = Il2CppInvoke.Struct<Vector2Value>(rectGetAnchoredPosition, rect);
             ApplyAnchoredX(rect, position, ScaleHorizontal(rule.AnchoredX.Value, horizontalScale), horizontalScale, details);
         }
 
@@ -746,7 +686,7 @@ namespace LimbusCanvasFix
             if (!ShouldApply(kind, LayoutWriteKind.AnchoredPosition) || !rule.AnchoredXWhenCurrentNegative.HasValue)
                 return;
 
-            var position = InvokeVector2(rectGetAnchoredPosition, rect);
+            var position = Il2CppInvoke.Struct<Vector2Value>(rectGetAnchoredPosition, rect);
             if (position.X >= -Epsilon)
                 return;
 
@@ -761,7 +701,7 @@ namespace LimbusCanvasFix
 
             var previous = position.X;
             position.X = targetX;
-            InvokeSetVector2(rectSetAnchoredPosition, rect, position);
+            Il2CppInvoke.SetStruct(rectSetAnchoredPosition, rect, position);
             details.Add($"anchoredPosition.x {previous:0.###}->{targetX:0.###} scale={horizontalScale:0.###}");
         }
 
@@ -770,7 +710,7 @@ namespace LimbusCanvasFix
             if (!ShouldApply(kind, LayoutWriteKind.LocalScale) || !rule.ScaleXYMax.HasValue)
                 return;
 
-            var scale = InvokeVector3(transformGetLocalScale, rect);
+            var scale = Il2CppInvoke.Struct<Vector3Value>(transformGetLocalScale, rect);
             var windowScale = GetUniformWindowScale();
             var targetScale = ScaleFromOneToMax(rule.ScaleXYMax.Value, windowScale);
             if (Math.Abs(scale.X - targetScale) <= Epsilon && Math.Abs(scale.Y - targetScale) <= Epsilon)
@@ -780,7 +720,7 @@ namespace LimbusCanvasFix
             var previousY = scale.Y;
             scale.X = targetScale;
             scale.Y = targetScale;
-            InvokeSetVector3(transformSetLocalScale, rect, scale);
+            Il2CppInvoke.SetStruct(transformSetLocalScale, rect, scale);
             details.Add($"localScale.xy ({previousX:0.###},{previousY:0.###})->{targetScale:0.###} windowScale={windowScale:0.###}");
         }
 
@@ -839,10 +779,10 @@ namespace LimbusCanvasFix
             var current = transform;
             for (var depth = 0; depth < MaxPathDepth && current != IntPtr.Zero; depth++)
             {
-                var name = InvokeString(objectGetName, current);
+                var name = Il2CppInvoke.String(objectGetName, current);
                 if (!string.IsNullOrWhiteSpace(name))
                     names.Add(name);
-                current = InvokeObject(transformGetParent, current);
+                current = Il2CppInvoke.Object(transformGetParent, current);
             }
 
             names.Reverse();
@@ -851,7 +791,7 @@ namespace LimbusCanvasFix
 
         private static bool PathMatchesRule(IntPtr transform, LayoutRule rule)
         {
-            var name = InvokeString(objectGetName, transform);
+            var name = Il2CppInvoke.String(objectGetName, transform);
             if (!string.Equals(name, rule.LeafName, StringComparison.Ordinal))
                 return false;
 
@@ -912,8 +852,8 @@ namespace LimbusCanvasFix
 
             try
             {
-                width = InvokeInt(screenGetWidth, IntPtr.Zero);
-                height = InvokeInt(screenGetHeight, IntPtr.Zero);
+                width = Il2CppInvoke.Int32(screenGetWidth, IntPtr.Zero);
+                height = Il2CppInvoke.Int32(screenGetHeight, IntPtr.Zero);
                 return width > 0 && height > 0;
             }
             catch (Exception ex)
@@ -921,22 +861,6 @@ namespace LimbusCanvasFix
                 ReportFailure("screen size lookup", ex);
                 return false;
             }
-        }
-
-        private static IntPtr RequireClass(string assembly, string ns, string name)
-        {
-            var klass = IL2CPP.GetIl2CppClass(assembly, ns, name);
-            if (klass == IntPtr.Zero)
-                throw new MissingMemberException($"IL2CPP class not found: {ns}.{name} in {assembly}");
-            return klass;
-        }
-
-        private static IntPtr RequireMethod(IntPtr klass, string name, int args)
-        {
-            var method = IL2CPP.il2cpp_class_get_method_from_name(klass, name, args);
-            if (method == IntPtr.Zero)
-                throw new MissingMethodException($"IL2CPP method not found: {name}/{args}");
-            return method;
         }
 
         private static IntPtr FindOptionalMethod(IntPtr primaryClass, IntPtr fallbackClass, string name, int args)
@@ -950,77 +874,6 @@ namespace LimbusCanvasFix
             return fallbackClass == IntPtr.Zero
                 ? IntPtr.Zero
                 : IL2CPP.il2cpp_class_get_method_from_name(fallbackClass, name, args);
-        }
-
-        private static IntPtr InvokeObject(IntPtr method, IntPtr instance)
-        {
-            unsafe
-            {
-                return InvokeObjectUnsafe(method, instance, null);
-            }
-        }
-
-        private static unsafe IntPtr InvokeObjectUnsafe(IntPtr method, IntPtr instance, void** args)
-        {
-            var exception = IntPtr.Zero;
-            var result = IL2CPP.il2cpp_runtime_invoke(method, instance, args, ref exception);
-            if (exception != IntPtr.Zero)
-                throw new InvalidOperationException($"IL2CPP invocation failed: exception=0x{exception.ToInt64():X}");
-            return result;
-        }
-
-        private static string InvokeString(IntPtr method, IntPtr instance)
-        {
-            var result = InvokeObject(method, instance);
-            return result == IntPtr.Zero ? "" : IL2CPP.Il2CppStringToManaged(result) ?? "";
-        }
-
-        private static int InvokeInt(IntPtr method, IntPtr instance)
-        {
-            var result = InvokeObject(method, instance);
-            return Marshal.ReadInt32(IL2CPP.il2cpp_object_unbox(result));
-        }
-
-        private static IntPtr InvokeObjectIntArg(IntPtr method, IntPtr instance, int value)
-        {
-            unsafe
-            {
-                var args = stackalloc void*[1];
-                args[0] = &value;
-                return InvokeObjectUnsafe(method, instance, args);
-            }
-        }
-
-        private static Vector2Value InvokeVector2(IntPtr method, IntPtr instance)
-        {
-            var result = InvokeObject(method, instance);
-            return Marshal.PtrToStructure<Vector2Value>(IL2CPP.il2cpp_object_unbox(result));
-        }
-
-        private static Vector3Value InvokeVector3(IntPtr method, IntPtr instance)
-        {
-            var result = InvokeObject(method, instance);
-            return Marshal.PtrToStructure<Vector3Value>(IL2CPP.il2cpp_object_unbox(result));
-        }
-
-        private static void InvokeSetVector2(IntPtr method, IntPtr instance, Vector2Value value)
-        {
-            unsafe
-            {
-                var args = stackalloc void*[1];
-                args[0] = &value;
-                InvokeObjectUnsafe(method, instance, args);
-            }
-        }
-
-        private static void InvokeSetVector3(IntPtr method, IntPtr instance, Vector3Value value)
-        {
-            unsafe
-            {
-                var args = stackalloc void*[1];
-                args[0] = &value;
-                InvokeObjectUnsafe(method, instance, args);
-            }
         }
 
         private static void ReportFailure(string phase, Exception ex)
@@ -1083,18 +936,4 @@ namespace LimbusCanvasFix
         LocalScale,
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct Vector2Value
-    {
-        public float X;
-        public float Y;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct Vector3Value
-    {
-        public float X;
-        public float Y;
-        public float Z;
-    }
 }

@@ -45,17 +45,75 @@ public static class Program
         return 0;
     }
 
-    static void PatchIl2CppInteropGenerator(string dll)
+    static AssemblyDefinition TryReadPatchAssembly(string dll)
     {
-        if (!File.Exists(dll)) { Console.WriteLine($"WARN: {dll} not found, skipping"); return; }
-        string bak = dll + ".unpatched";
-        if (!File.Exists(bak)) { File.Copy(dll, bak); Console.WriteLine($"Backup created: {bak}"); }
-        else { Console.WriteLine($"Restoring from backup: {bak}"); File.Copy(bak, dll, overwrite: true); }
+        if (!File.Exists(dll))
+        {
+            Console.WriteLine($"WARN: {dll} not found, skipping");
+            return null;
+        }
+
+        RestoreFromBackup(dll);
 
         var resolver = new DefaultAssemblyResolver();
         resolver.AddSearchDirectory(Path.GetDirectoryName(dll));
         var rp = new ReaderParameters { AssemblyResolver = resolver, ReadWrite = false, InMemory = true };
-        using var asm = AssemblyDefinition.ReadAssembly(dll, rp);
+        return AssemblyDefinition.ReadAssembly(dll, rp);
+    }
+
+    static void RestoreFromBackup(string dll)
+    {
+        var backup = dll + ".unpatched";
+        if (!File.Exists(backup))
+        {
+            File.Copy(dll, backup, overwrite: false);
+            Console.WriteLine($"Backup created: {backup}");
+            return;
+        }
+
+        Console.WriteLine($"Restoring from backup: {backup}");
+        File.Copy(backup, dll, overwrite: true);
+    }
+
+    static void WrapMethods(
+        ModuleDefinition module,
+        IEnumerable<(string TypeName, string MethodName, int ParamCount, int MaxDepth)> targets,
+        bool includeParameterNames = false)
+    {
+        foreach (var (typeName, methodName, paramCount, maxDepth) in targets)
+        {
+            var type = module.GetType(typeName);
+            if (type == null) { Console.WriteLine($"WARN: type {typeName} not found"); continue; }
+
+            var method = type.Methods.FirstOrDefault(candidate => candidate.Name == methodName && candidate.Parameters.Count == paramCount);
+            if (method == null) { Console.WriteLine($"WARN: {typeName}.{methodName}({paramCount} params) not found"); continue; }
+
+            WrapMethod(typeName, method, maxDepth, includeParameterNames);
+        }
+    }
+
+    static void WrapMethod(string typeName, MethodDefinition method, int maxDepth, bool includeParameterNames)
+    {
+        var returnType = method.ReturnType.FullName;
+        if (maxDepth > 0)
+        {
+            Console.WriteLine($"Wrapping (depth-limit={maxDepth}) {typeName}.{method.Name}() -> {returnType}");
+            WrapMethodWithDepthLimit(method, maxDepth);
+            return;
+        }
+
+        var parameters = includeParameterNames
+            ? $"({string.Join(",", method.Parameters.Select(parameter => parameter.ParameterType.Name))})"
+            : "()";
+        Console.WriteLine($"Wrapping {typeName}.{method.Name}{parameters} -> {returnType}");
+        WrapMethodInTryCatch(method);
+    }
+
+    static void PatchIl2CppInteropGenerator(string dll)
+    {
+        using var asm = TryReadPatchAssembly(dll);
+        if (asm == null) return;
+
         var module = asm.MainModule;
 
         var generatorTargets = new (string TypeName, string MethodName, int ParamCount)[]
@@ -70,15 +128,7 @@ public static class Program
             ("Il2CppInterop.Generator.Passes.Pass81FillUnstrippedMethodBodies", "DoPass", 1),
         };
 
-        foreach (var (typeName, methodName, paramCount) in generatorTargets)
-        {
-            var t = module.GetType(typeName);
-            if (t == null) { Console.WriteLine($"WARN: type {typeName} not found"); continue; }
-            var m = t.Methods.FirstOrDefault(mm => mm.Name == methodName && mm.Parameters.Count == paramCount);
-            if (m == null) { Console.WriteLine($"WARN: {typeName}.{methodName}({paramCount} params) not found"); continue; }
-            Console.WriteLine($"Wrapping {typeName}.{m.Name}() -> {m.ReturnType.FullName}");
-            WrapMethodInTryCatch(m);
-        }
+        WrapMethods(module, generatorTargets.Select(target => (target.TypeName, target.MethodName, target.ParamCount, MaxDepth: 0)));
 
         asm.Write(dll);
         Console.WriteLine($"Patched: {dll}");
@@ -86,15 +136,9 @@ public static class Program
 
     static void PatchCpp2IlCore(string dll)
     {
-        if (!File.Exists(dll)) { Console.WriteLine($"WARN: {dll} not found, skipping"); return; }
-        string bak = dll + ".unpatched";
-        if (!File.Exists(bak)) { File.Copy(dll, bak); Console.WriteLine($"Backup created: {bak}"); }
-        else { Console.WriteLine($"Restoring from backup: {bak}"); File.Copy(bak, dll, overwrite: true); }
+        using var asm = TryReadPatchAssembly(dll);
+        if (asm == null) return;
 
-        var resolver = new DefaultAssemblyResolver();
-        resolver.AddSearchDirectory(Path.GetDirectoryName(dll));
-        var rp = new ReaderParameters { AssemblyResolver = resolver, ReadWrite = false, InMemory = true };
-        using var asm = AssemblyDefinition.ReadAssembly(dll, rp);
         var module = asm.MainModule;
 
         var coreTargets = new (string TypeName, string MethodName, int ParamCount, int MaxDepth)[]
@@ -146,24 +190,7 @@ public static class Program
             (AsmResolverAssemblyPopulatorType, "CopyCustomAttributes", 2, 0),
         };
 
-        foreach (var (typeName, methodName, paramCount, maxDepth) in coreTargets)
-        {
-            var t = module.GetType(typeName);
-            if (t == null) { Console.WriteLine($"WARN: type {typeName} not found"); continue; }
-            var m = t.Methods.FirstOrDefault(mm => mm.Name == methodName && mm.Parameters.Count == paramCount);
-            if (m == null) { Console.WriteLine($"WARN: {typeName}.{methodName}({paramCount} params) not found"); continue; }
-            var ret = m.ReturnType.FullName;
-            if (maxDepth > 0)
-            {
-                Console.WriteLine($"Wrapping (depth-limit={maxDepth}) {typeName}.{m.Name}() -> {ret}");
-                WrapMethodWithDepthLimit(m, maxDepth);
-            }
-            else
-            {
-                Console.WriteLine($"Wrapping {typeName}.{m.Name}() -> {ret}");
-                WrapMethodInTryCatch(m);
-            }
-        }
+        WrapMethods(module, coreTargets);
 
         ReplaceAsmResolverBuildAssembliesWithStubOnly(module);
 
@@ -198,23 +225,9 @@ public static class Program
 
     static void PatchLibCpp2IL(string dll)
     {
-        string bak = dll + ".unpatched";
-        if (!File.Exists(bak))
-        {
-            File.Copy(dll, bak, overwrite: false);
-            Console.WriteLine($"Backup created: {bak}");
-        }
-        else
-        {
-            Console.WriteLine($"Backup already exists, restoring from it before patching: {bak}");
-            File.Copy(bak, dll, overwrite: true);
-        }
+        using var asm = TryReadPatchAssembly(dll);
+        if (asm == null) return;
 
-        var resolver = new DefaultAssemblyResolver();
-        resolver.AddSearchDirectory(Path.GetDirectoryName(dll));
-        var rp = new ReaderParameters { AssemblyResolver = resolver, ReadWrite = false, InMemory = true };
-
-        using var asm = AssemblyDefinition.ReadAssembly(dll, rp);
         var module = asm.MainModule;
 
         // Targets: methods that index unchecked into Cpp2IL data structures and throw
@@ -257,24 +270,7 @@ public static class Program
             ("LibCpp2IL.Metadata.Il2CppMetadata",          "GetStringFromIndex",          1, 0),
         };
 
-        foreach (var (typeName, methodName, paramCount, maxDepth) in targets)
-        {
-            var t = module.GetType(typeName);
-            if (t == null) { Console.WriteLine($"WARN: type {typeName} not found"); continue; }
-            var m = t.Methods.FirstOrDefault(mm => mm.Name == methodName && mm.Parameters.Count == paramCount);
-            if (m == null) { Console.WriteLine($"WARN: {typeName}.{methodName}({paramCount} params) not found"); continue; }
-            var ret = m.ReturnType.FullName;
-            if (maxDepth > 0)
-            {
-                Console.WriteLine($"Wrapping (depth-limit={maxDepth}) {typeName}.{m.Name}() -> {ret}");
-                WrapMethodWithDepthLimit(m, maxDepth);
-            }
-            else
-            {
-                Console.WriteLine($"Wrapping {typeName}.{m.Name}({string.Join(",", m.Parameters.Select(p => p.ParameterType.Name))}) -> {ret}");
-                WrapMethodInTryCatch(m);
-            }
-        }
+        WrapMethods(module, targets, includeParameterNames: true);
 
         var metadataLookupTargets = new (string MethodName, int ParamCount)[]
         {

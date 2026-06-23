@@ -3,10 +3,12 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
+using LimbusShared;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using static LimbusShared.NativeInterop;
 
 namespace LimbusHdrBalanceFix;
 
@@ -110,15 +112,9 @@ public sealed class Plugin : BasePlugin
             Log.LogInfo($"[debug] {message}");
     }
 
-    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name)
-    {
-        return entry ?? throw new InvalidOperationException($"{NAME} config entry '{name}' is not initialized.");
-    }
+    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => PluginConfig.Required(entry, NAME, name);
 
-    private static bool IsSet(ConfigEntry<bool>? entry)
-    {
-        return entry?.Value ?? false;
-    }
+    private static bool IsSet(ConfigEntry<bool>? entry) => PluginConfig.IsSet(entry);
 }
 
 internal static class CanvasRenderPumpDetour
@@ -173,20 +169,7 @@ internal static class CanvasRenderPumpDetour
 
     public static void Uninstall()
     {
-        try
-        {
-            detour?.Undo();
-            detour?.Free();
-        }
-        catch
-        {
-            // Unity teardown can race plugin unload.
-        }
-        finally
-        {
-            detour = null;
-            original = null;
-        }
+        DetourLifecycle.Free(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr methodInfo)
@@ -224,7 +207,6 @@ internal static class CanvasRenderPumpDetour
         VolumeProfilePatcher.ReapplyKnownProfiles("Canvas.SendWillRenderCanvases");
     }
 
-    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }
 
 internal static class VolumeOnEnableDetour
@@ -277,20 +259,7 @@ internal static class VolumeOnEnableDetour
 
     public static void Uninstall()
     {
-        try
-        {
-            detour?.Undo();
-            detour?.Free();
-        }
-        catch
-        {
-            // Unity teardown can race plugin unload.
-        }
-        finally
-        {
-            detour = null;
-            original = null;
-        }
+        DetourLifecycle.Free(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr self, IntPtr methodInfo)
@@ -299,7 +268,6 @@ internal static class VolumeOnEnableDetour
         VolumeProfilePatcher.ApplyToVolume(self, "Volume.OnEnable");
     }
 
-    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }
 
 internal static class VolumeProfileOnEnableDetour
@@ -352,20 +320,7 @@ internal static class VolumeProfileOnEnableDetour
 
     public static void Uninstall()
     {
-        try
-        {
-            detour?.Undo();
-            detour?.Free();
-        }
-        catch
-        {
-            // Unity teardown can race plugin unload.
-        }
-        finally
-        {
-            detour = null;
-            original = null;
-        }
+        DetourLifecycle.Free(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr self, IntPtr methodInfo)
@@ -374,7 +329,6 @@ internal static class VolumeProfileOnEnableDetour
         VolumeProfilePatcher.ApplyToProfile(self, "VolumeProfile.OnEnable");
     }
 
-    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }
 
 internal static class HdrOutputSettingsPatcher
@@ -569,49 +523,44 @@ internal static class HdrOutputSettingsPatcher
 
     private static bool TryGetBool(GetBoolIntDelegate? getter, string label, out bool result)
     {
-        result = false;
-        if (getter == null)
-            return false;
-
-        try
-        {
-            result = getter(MainDisplayIndex);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ReportFailure($"HDR output {label}", ex);
-            return false;
-        }
+        return TryGetValue(getter, label, false, out result, invoke: g => g(MainDisplayIndex));
     }
 
     private static bool TryGetFloat(GetFloatIntDelegate? getter, string label, out float result)
     {
-        result = 0f;
-        if (getter == null)
-            return false;
-
-        try
-        {
-            result = getter(MainDisplayIndex);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ReportFailure($"HDR output {label}", ex);
-            return false;
-        }
+        return TryGetValue(getter, label, 0f, out result, invoke: g => g(MainDisplayIndex));
     }
 
     private static bool TryGetInt(GetIntIntDelegate? getter, string label, out int result)
     {
-        result = 0;
+        return TryGetValue(getter, label, 0, out result, invoke: g => g(MainDisplayIndex));
+    }
+
+    private static bool TrySetBool(SetBoolIntDelegate? setter, string label, bool value)
+    {
+        return TrySetValue(setter, label, value, invoke: (s, v) => s(MainDisplayIndex, v));
+    }
+
+    private static bool TrySetFloat(SetFloatIntDelegate? setter, string label, float value)
+    {
+        return TrySetValue(setter, label, value, invoke: (s, v) => s(MainDisplayIndex, v));
+    }
+
+    private static bool TryGetValue<TDelegate, TValue>(
+        TDelegate? getter,
+        string label,
+        TValue defaultValue,
+        out TValue result,
+        Func<TDelegate, TValue> invoke)
+        where TDelegate : Delegate
+    {
+        result = defaultValue;
         if (getter == null)
             return false;
 
         try
         {
-            result = getter(MainDisplayIndex);
+            result = invoke(getter);
             return true;
         }
         catch (Exception ex)
@@ -621,31 +570,19 @@ internal static class HdrOutputSettingsPatcher
         }
     }
 
-    private static bool TrySetBool(SetBoolIntDelegate? setter, string label, bool value)
+    private static bool TrySetValue<TDelegate, TValue>(
+        TDelegate? setter,
+        string label,
+        TValue value,
+        Action<TDelegate, TValue> invoke)
+        where TDelegate : Delegate
     {
         if (setter == null)
             return false;
 
         try
         {
-            setter(MainDisplayIndex, value);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ReportFailure($"HDR output {label}", ex);
-            return false;
-        }
-    }
-
-    private static bool TrySetFloat(SetFloatIntDelegate? setter, string label, float value)
-    {
-        if (setter == null)
-            return false;
-
-        try
-        {
-            setter(MainDisplayIndex, value);
+            invoke(setter, value);
             return true;
         }
         catch (Exception ex)
@@ -851,12 +788,12 @@ internal static class VolumeProfilePatcher
     {
         var profile = IntPtr.Zero;
         if (volumeGetProfile != IntPtr.Zero)
-            profile = InvokeObject(volumeGetProfile, volume);
+            profile = Il2CppInvoke.Object(volumeGetProfile, volume);
         if (profile != IntPtr.Zero)
             return profile;
 
         if (volumeGetSharedProfile != IntPtr.Zero)
-            profile = InvokeObject(volumeGetSharedProfile, volume);
+            profile = Il2CppInvoke.Object(volumeGetSharedProfile, volume);
         if (profile != IntPtr.Zero)
             return profile;
 
@@ -961,53 +898,28 @@ internal static class VolumeProfilePatcher
 
     private static bool TryGetFloatValue(IntPtr parameter, out float value)
     {
-        value = 0f;
-        try
-        {
-            var field = FindFieldInHierarchy(IL2CPP.il2cpp_object_get_class(parameter), SerializedValueField);
-            if (field == IntPtr.Zero)
-                return false;
-
-            unsafe
-            {
-                var local = 0f;
-                IL2CPP.il2cpp_field_get_value(parameter, field, &local);
-                value = local;
-            }
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ReportFailure("float parameter read", ex);
-            return false;
-        }
+        return TryGetSerializedValue(parameter, "float parameter read", 0f, out value);
     }
 
     private static bool TrySetFloatValue(IntPtr parameter, float value)
     {
-        try
-        {
-            var field = FindFieldInHierarchy(IL2CPP.il2cpp_object_get_class(parameter), SerializedValueField);
-            if (field == IntPtr.Zero)
-                return false;
-
-            unsafe
-            {
-                var local = value;
-                IL2CPP.il2cpp_field_set_value(parameter, field, &local);
-            }
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ReportFailure("float parameter write", ex);
-            return false;
-        }
+        return TrySetSerializedValue(parameter, "float parameter write", value);
     }
 
     private static bool TryGetIntValue(IntPtr parameter, out int value)
     {
-        value = 0;
+        return TryGetSerializedValue(parameter, "int parameter read", 0, out value);
+    }
+
+    private static bool TrySetIntValue(IntPtr parameter, int value)
+    {
+        return TrySetSerializedValue(parameter, "int parameter write", value);
+    }
+
+    private static bool TryGetSerializedValue<T>(IntPtr parameter, string phase, T defaultValue, out T value)
+        where T : unmanaged
+    {
+        value = defaultValue;
         try
         {
             var field = FindFieldInHierarchy(IL2CPP.il2cpp_object_get_class(parameter), SerializedValueField);
@@ -1016,7 +928,7 @@ internal static class VolumeProfilePatcher
 
             unsafe
             {
-                var local = 0;
+                var local = defaultValue;
                 IL2CPP.il2cpp_field_get_value(parameter, field, &local);
                 value = local;
             }
@@ -1024,12 +936,13 @@ internal static class VolumeProfilePatcher
         }
         catch (Exception ex)
         {
-            ReportFailure("int parameter read", ex);
+            ReportFailure(phase, ex);
             return false;
         }
     }
 
-    private static bool TrySetIntValue(IntPtr parameter, int value)
+    private static bool TrySetSerializedValue<T>(IntPtr parameter, string phase, T value)
+        where T : unmanaged
     {
         try
         {
@@ -1046,7 +959,7 @@ internal static class VolumeProfilePatcher
         }
         catch (Exception ex)
         {
-            ReportFailure("int parameter write", ex);
+            ReportFailure(phase, ex);
             return false;
         }
     }
@@ -1085,10 +998,10 @@ internal static class VolumeProfilePatcher
             yield break;
         }
 
-        var count = InvokeInt(countMethod, list);
+        var count = Il2CppInvoke.Int32(countMethod, list);
         for (var i = 0; i < count; i++)
         {
-            var item = InvokeObjectIntArg(itemMethod, list, i);
+            var item = Il2CppInvoke.ObjectWithIntArg(itemMethod, list, i);
             if (item != IntPtr.Zero)
                 yield return item;
         }
@@ -1139,39 +1052,6 @@ internal static class VolumeProfilePatcher
         return IntPtr.Zero;
     }
 
-    private static IntPtr InvokeObject(IntPtr method, IntPtr instance)
-    {
-        unsafe
-        {
-            return InvokeObjectUnsafe(method, instance, null);
-        }
-    }
-
-    private static unsafe IntPtr InvokeObjectUnsafe(IntPtr method, IntPtr instance, void** args)
-    {
-        var exception = IntPtr.Zero;
-        var result = IL2CPP.il2cpp_runtime_invoke(method, instance, args, ref exception);
-        if (exception != IntPtr.Zero)
-            throw new InvalidOperationException($"IL2CPP invocation failed: exception=0x{exception.ToInt64():X}");
-        return result;
-    }
-
-    private static int InvokeInt(IntPtr method, IntPtr instance)
-    {
-        var result = InvokeObject(method, instance);
-        return Marshal.ReadInt32(IL2CPP.il2cpp_object_unbox(result));
-    }
-
-    private static IntPtr InvokeObjectIntArg(IntPtr method, IntPtr instance, int value)
-    {
-        unsafe
-        {
-            var args = stackalloc void*[1];
-            args[0] = &value;
-            return InvokeObjectUnsafe(method, instance, args);
-        }
-    }
-
     private static string GetClassName(IntPtr obj)
     {
         if (obj == IntPtr.Zero)
@@ -1206,5 +1086,4 @@ internal static class VolumeProfilePatcher
             Plugin.Log.LogDebug($"HDR volume {phase} failure #{count}: {ex.GetType().Name}: {ex.Message}");
     }
 
-    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }

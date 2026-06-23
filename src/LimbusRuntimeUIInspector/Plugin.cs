@@ -3,6 +3,7 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
+using LimbusShared;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Collections.Generic;
@@ -16,6 +17,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
+using static LimbusShared.Il2CppLookup;
+using static LimbusShared.NativeInterop;
 
 namespace LimbusRuntimeUIInspector;
 
@@ -87,15 +90,9 @@ public sealed class Plugin : BasePlugin
         debugLogging = config.Bind("Diagnostics", "DebugLogging", true, "Writes detailed inspector server and scan/edit job lifecycle logs.");
     }
 
-    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name)
-    {
-        return entry ?? throw new InvalidOperationException($"{NAME} config entry '{name}' is not initialized.");
-    }
+    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => PluginConfig.Required(entry, NAME, name);
 
-    private static bool IsSet(ConfigEntry<bool>? entry)
-    {
-        return entry?.Value ?? false;
-    }
+    private static bool IsSet(ConfigEntry<bool>? entry) => PluginConfig.IsSet(entry);
 }
 
 internal static class ContentTypes
@@ -404,20 +401,7 @@ internal static class UnityPumpDetour
 
     public static void Uninstall()
     {
-        try
-        {
-            detour?.Undo();
-            detour?.Free();
-        }
-        catch
-        {
-            // Unity teardown can race plugin unload.
-        }
-        finally
-        {
-            detour = null;
-            original = null;
-        }
+        DetourLifecycle.Free(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr methodInfo)
@@ -440,7 +424,6 @@ internal static class UnityPumpDetour
         }
     }
 
-    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }
 
 internal static class CanvasRootObserveDetour
@@ -496,20 +479,7 @@ internal static class CanvasRootObserveDetour
 
     public static void Uninstall()
     {
-        try
-        {
-            detour?.Undo();
-            detour?.Free();
-        }
-        catch
-        {
-            // Unity teardown can race plugin unload.
-        }
-        finally
-        {
-            detour = null;
-            original = null;
-        }
+        DetourLifecycle.Free(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr self, IntPtr methodInfo)
@@ -518,7 +488,6 @@ internal static class CanvasRootObserveDetour
         CanvasRootRegistry.ObserveComponent(self, "CanvasScaler.OnEnable");
     }
 
-    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }
 
 internal static class RectTransformRootObserveDetour
@@ -574,20 +543,7 @@ internal static class RectTransformRootObserveDetour
 
     public static void Uninstall()
     {
-        try
-        {
-            detour?.Undo();
-            detour?.Free();
-        }
-        catch
-        {
-            // Unity teardown can race plugin unload.
-        }
-        finally
-        {
-            detour = null;
-            original = null;
-        }
+        DetourLifecycle.Free(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr rectTransform, IntPtr methodInfo)
@@ -596,7 +552,6 @@ internal static class RectTransformRootObserveDetour
         CanvasRootRegistry.ObserveTransformAndAncestors(rectTransform, "RectTransform.SendReapplyDrivenProperties");
     }
 
-    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }
 
 internal static class GameObjectRootObserveDetour
@@ -652,20 +607,7 @@ internal static class GameObjectRootObserveDetour
 
     public static void Uninstall()
     {
-        try
-        {
-            detour?.Undo();
-            detour?.Free();
-        }
-        catch
-        {
-            // Unity teardown can race plugin unload.
-        }
-        finally
-        {
-            detour = null;
-            original = null;
-        }
+        DetourLifecycle.Free(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr self, byte active, IntPtr methodInfo)
@@ -675,7 +617,6 @@ internal static class GameObjectRootObserveDetour
             CanvasRootRegistry.ObserveGameObject(self, "GameObject.SetActive");
     }
 
-    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }
 
 internal static class CanvasRootRegistry
@@ -1174,20 +1115,20 @@ internal static class UnityUiRuntime
     public static IntPtr TryGetTransformFromComponent(IntPtr component)
     {
         EnsureInitialized();
-        var gameObject = InvokeObject(componentGetGameObject, component);
+        var gameObject = Il2CppInvoke.Object(componentGetGameObject, component);
         return TryGetTransformFromGameObject(gameObject);
     }
 
     public static IntPtr TryGetTransformFromGameObject(IntPtr gameObject)
     {
         EnsureInitialized();
-        return gameObject == IntPtr.Zero ? IntPtr.Zero : InvokeObject(gameObjectGetTransform, gameObject);
+        return gameObject == IntPtr.Zero ? IntPtr.Zero : Il2CppInvoke.Object(gameObjectGetTransform, gameObject);
     }
 
     public static IntPtr TryGetParentTransform(IntPtr transform)
     {
         EnsureInitialized();
-        return transform == IntPtr.Zero ? IntPtr.Zero : InvokeObject(transformGetParent, transform);
+        return transform == IntPtr.Zero ? IntPtr.Zero : Il2CppInvoke.Object(transformGetParent, transform);
     }
 
     public static IntPtr TryGetTopmostTransform(IntPtr transform)
@@ -1198,7 +1139,7 @@ internal static class UnityUiRuntime
         for (var depth = 0; depth < 256 && current != IntPtr.Zero; depth++)
         {
             topmost = current;
-            current = InvokeObject(transformGetParent, current);
+            current = Il2CppInvoke.Object(transformGetParent, current);
         }
 
         return topmost;
@@ -1352,11 +1293,11 @@ internal static class UnityUiRuntime
     public static UiElement? TryReadRectElement(IntPtr rect, bool includeInactive)
     {
         EnsureInitialized();
-        var gameObject = InvokeObject(componentGetGameObject, rect);
+        var gameObject = Il2CppInvoke.Object(componentGetGameObject, rect);
         if (gameObject == IntPtr.Zero)
             return null;
 
-        var activeInHierarchy = InvokeBool(gameObjectGetActiveInHierarchy, gameObject);
+        var activeInHierarchy = Il2CppInvoke.Boolean(gameObjectGetActiveInHierarchy, gameObject);
         if (!includeInactive && !activeInHierarchy)
             return null;
 
@@ -1366,11 +1307,11 @@ internal static class UnityUiRuntime
     public static UiElement? TryReadTransformElement(IntPtr transform, bool includeInactive)
     {
         EnsureInitialized();
-        var gameObject = InvokeObject(componentGetGameObject, transform);
+        var gameObject = Il2CppInvoke.Object(componentGetGameObject, transform);
         if (gameObject == IntPtr.Zero)
             return null;
 
-        var activeInHierarchy = InvokeBool(gameObjectGetActiveInHierarchy, gameObject);
+        var activeInHierarchy = Il2CppInvoke.Boolean(gameObjectGetActiveInHierarchy, gameObject);
         if (!includeInactive && !activeInHierarchy)
             return null;
 
@@ -1382,7 +1323,7 @@ internal static class UnityUiRuntime
         var stopwatch = Stopwatch.StartNew();
         Plugin.Log.LogInfo("Inspector scan: Canvas.ForceUpdateCanvases begin.");
         EnsureInitialized();
-        InvokeObject(canvasForceUpdateCanvases, IntPtr.Zero);
+        Il2CppInvoke.Object(canvasForceUpdateCanvases, IntPtr.Zero);
         Plugin.Log.LogInfo($"Inspector scan: Canvas.ForceUpdateCanvases complete after {stopwatch.ElapsedMilliseconds}ms.");
     }
 
@@ -1429,11 +1370,11 @@ internal static class UnityUiRuntime
 
     private static IntPtr ValidateEditTarget(EditRequest edit, IntPtr transform)
     {
-        var gameObject = InvokeObject(componentGetGameObject, transform);
+        var gameObject = Il2CppInvoke.Object(componentGetGameObject, transform);
         if (gameObject == IntPtr.Zero)
             throw new InvalidOperationException($"Cached inspector target for id {edit.Id} no longer has a GameObject.");
 
-        var actualId = InvokeInt(objectGetInstanceId, gameObject);
+        var actualId = Il2CppInvoke.Int32(objectGetInstanceId, gameObject);
         if (actualId != edit.Id)
             throw new InvalidOperationException($"Cached inspector target id mismatch. Expected {edit.Id}, found {actualId}. Run a fresh scan.");
 
@@ -1443,7 +1384,7 @@ internal static class UnityUiRuntime
     private static void ApplyActiveEdit(EditRequest edit, IntPtr gameObject)
     {
         if (edit.Active.HasValue)
-            InvokeSetBool(gameObjectSetActive, gameObject, edit.Active.Value);
+            Il2CppInvoke.SetBoolean(gameObjectSetActive, gameObject, edit.Active.Value);
     }
 
     private static void ApplyPositionEdit(EditRequest edit, IntPtr transform, bool isRectTransform)
@@ -1494,30 +1435,30 @@ internal static class UnityUiRuntime
 
     private static void ApplyVector2Edit(IntPtr getter, IntPtr setter, IntPtr target, float? x, float? y)
     {
-        var value = InvokeVector2(getter, target);
+        var value = Il2CppInvoke.Struct<Vector2Value>(getter, target);
         if (x.HasValue)
             value.X = x.Value;
         if (y.HasValue)
             value.Y = y.Value;
-        InvokeSetVector2(setter, target, value);
+        Il2CppInvoke.SetStruct(setter, target, value);
     }
 
     private static void ApplyVector3Edit(IntPtr getter, IntPtr setter, IntPtr target, float? x, float? y, float? z)
     {
-        var value = InvokeVector3(getter, target);
+        var value = Il2CppInvoke.Struct<Vector3Value>(getter, target);
         if (x.HasValue)
             value.X = x.Value;
         if (y.HasValue)
             value.Y = y.Value;
         if (z.HasValue)
             value.Z = z.Value;
-        InvokeSetVector3(setter, target, value);
+        Il2CppInvoke.SetStruct(setter, target, value);
     }
 
     private static UiElement ReadUpdatedElement(IntPtr transform, IntPtr gameObject, bool isRectTransform)
     {
         var path = BuildPath(transform);
-        var activeInHierarchy = InvokeBool(gameObjectGetActiveInHierarchy, gameObject);
+        var activeInHierarchy = Il2CppInvoke.Boolean(gameObjectGetActiveInHierarchy, gameObject);
         return isRectTransform
             ? ReadElement(transform, gameObject, path, activeInHierarchy)
             : ReadTransformElement(transform, gameObject, path, activeInHierarchy);
@@ -1525,19 +1466,19 @@ internal static class UnityUiRuntime
 
     private static UiElement ReadElement(IntPtr rect, IntPtr gameObject, string path, bool activeInHierarchy)
     {
-        var anchored = InvokeVector2(rectGetAnchoredPosition, rect);
-        var size = InvokeVector2(rectGetSizeDelta, rect);
-        var anchorMin = InvokeVector2(rectGetAnchorMin, rect);
-        var anchorMax = InvokeVector2(rectGetAnchorMax, rect);
-        var pivot = InvokeVector2(rectGetPivot, rect);
-        var scale = InvokeVector3(transformGetLocalScale, rect);
+        var anchored = Il2CppInvoke.Struct<Vector2Value>(rectGetAnchoredPosition, rect);
+        var size = Il2CppInvoke.Struct<Vector2Value>(rectGetSizeDelta, rect);
+        var anchorMin = Il2CppInvoke.Struct<Vector2Value>(rectGetAnchorMin, rect);
+        var anchorMax = Il2CppInvoke.Struct<Vector2Value>(rectGetAnchorMax, rect);
+        var pivot = Il2CppInvoke.Struct<Vector2Value>(rectGetPivot, rect);
+        var scale = Il2CppInvoke.Struct<Vector3Value>(transformGetLocalScale, rect);
 
         return new UiElement(
-            InvokeInt(objectGetInstanceId, gameObject),
-            InvokeString(objectGetName, gameObject),
+            Il2CppInvoke.Int32(objectGetInstanceId, gameObject),
+            Il2CppInvoke.String(objectGetName, gameObject),
             path,
             "RectTransform",
-            InvokeBool(gameObjectGetActiveSelf, gameObject),
+            Il2CppInvoke.Boolean(gameObjectGetActiveSelf, gameObject),
             activeInHierarchy,
             Round(anchored.X),
             Round(anchored.Y),
@@ -1556,15 +1497,15 @@ internal static class UnityUiRuntime
 
     private static UiElement ReadTransformElement(IntPtr transform, IntPtr gameObject, string path, bool activeInHierarchy)
     {
-        var position = InvokeVector3(transformGetLocalPosition, transform);
-        var scale = InvokeVector3(transformGetLocalScale, transform);
+        var position = Il2CppInvoke.Struct<Vector3Value>(transformGetLocalPosition, transform);
+        var scale = Il2CppInvoke.Struct<Vector3Value>(transformGetLocalScale, transform);
 
         return new UiElement(
-            InvokeInt(objectGetInstanceId, gameObject),
-            InvokeString(objectGetName, gameObject),
+            Il2CppInvoke.Int32(objectGetInstanceId, gameObject),
+            Il2CppInvoke.String(objectGetName, gameObject),
             path,
             "Transform",
-            InvokeBool(gameObjectGetActiveSelf, gameObject),
+            Il2CppInvoke.Boolean(gameObjectGetActiveSelf, gameObject),
             activeInHierarchy,
             Round(position.X),
             Round(position.Y),
@@ -1586,7 +1527,7 @@ internal static class UnityUiRuntime
         int childCount;
         try
         {
-            childCount = InvokeInt(transformGetChildCount, transform);
+            childCount = Il2CppInvoke.Int32(transformGetChildCount, transform);
         }
         catch (Exception ex)
         {
@@ -1598,7 +1539,7 @@ internal static class UnityUiRuntime
         {
             try
             {
-                var child = InvokeObjectIntArg(transformGetChild, transform, i);
+                var child = Il2CppInvoke.ObjectWithIntArg(transformGetChild, transform, i);
                 if (child != IntPtr.Zero)
                     stack.Push((child, depth + 1));
             }
@@ -1622,22 +1563,7 @@ internal static class UnityUiRuntime
 
     private static bool IsRectTransformObject(IntPtr obj)
     {
-        try
-        {
-            var klass = IL2CPP.il2cpp_object_get_class(obj);
-            if (klass == IntPtr.Zero)
-                return false;
-
-            if (klass == rectTransformClass)
-                return true;
-
-            var name = Marshal.PtrToStringAnsi(IL2CPP.il2cpp_class_get_name(klass)) ?? "";
-            return name == "RectTransform";
-        }
-        catch
-        {
-            return false;
-        }
+        return Il2CppLookup.IsObjectClassOrNamed(obj, rectTransformClass, "RectTransform");
     }
 
     private static string BuildPath(IntPtr transform)
@@ -1646,10 +1572,10 @@ internal static class UnityUiRuntime
         var current = transform;
         for (var depth = 0; depth < 64 && current != IntPtr.Zero; depth++)
         {
-            var name = InvokeString(objectGetName, current);
+            var name = Il2CppInvoke.String(objectGetName, current);
             if (!string.IsNullOrWhiteSpace(name))
                 names.Add(name);
-            current = InvokeObject(transformGetParent, current);
+            current = Il2CppInvoke.Object(transformGetParent, current);
         }
 
         names.Reverse();
@@ -1703,126 +1629,7 @@ internal static class UnityUiRuntime
         initialized = true;
     }
 
-    private static IntPtr RequireClass(string assembly, string ns, string name)
-    {
-        var klass = IL2CPP.GetIl2CppClass(assembly, ns, name);
-        if (klass == IntPtr.Zero)
-            throw new MissingMemberException($"IL2CPP class not found: {ns}.{name} in {assembly}");
-        return klass;
-    }
-
-    private static IntPtr RequireMethod(IntPtr klass, string name, int args)
-    {
-        var method = IL2CPP.il2cpp_class_get_method_from_name(klass, name, args);
-        if (method == IntPtr.Zero)
-            throw new MissingMethodException($"IL2CPP method not found: {name}/{args}");
-        return method;
-    }
-
-    private static IntPtr InvokeObject(IntPtr method, IntPtr instance)
-    {
-        unsafe
-        {
-            return InvokeObjectUnsafe(method, instance, null);
-        }
-    }
-
-    private static unsafe IntPtr InvokeObjectUnsafe(IntPtr method, IntPtr instance, void** args)
-    {
-        var exception = IntPtr.Zero;
-        var result = IL2CPP.il2cpp_runtime_invoke(method, instance, args, ref exception);
-        if (exception != IntPtr.Zero)
-            throw new InvalidOperationException($"IL2CPP invocation failed: exception=0x{exception.ToInt64():X}");
-        return result;
-    }
-
-    private static string InvokeString(IntPtr method, IntPtr instance)
-    {
-        var result = InvokeObject(method, instance);
-        return result == IntPtr.Zero ? "" : IL2CPP.Il2CppStringToManaged(result) ?? "";
-    }
-
-    private static int InvokeInt(IntPtr method, IntPtr instance)
-    {
-        var result = InvokeObject(method, instance);
-        return Marshal.ReadInt32(IL2CPP.il2cpp_object_unbox(result));
-    }
-
-    private static bool InvokeBool(IntPtr method, IntPtr instance)
-    {
-        var result = InvokeObject(method, instance);
-        return Marshal.ReadByte(IL2CPP.il2cpp_object_unbox(result)) != 0;
-    }
-
-    private static void InvokeSetBool(IntPtr method, IntPtr instance, bool value)
-    {
-        unsafe
-        {
-            var raw = value ? (byte)1 : (byte)0;
-            var args = stackalloc void*[1];
-            args[0] = &raw;
-            InvokeObjectUnsafe(method, instance, args);
-        }
-    }
-
-    private static IntPtr InvokeObjectIntArg(IntPtr method, IntPtr instance, int value)
-    {
-        unsafe
-        {
-            var args = stackalloc void*[1];
-            args[0] = &value;
-            return InvokeObjectUnsafe(method, instance, args);
-        }
-    }
-
-    private static Vector2Value InvokeVector2(IntPtr method, IntPtr instance)
-    {
-        var result = InvokeObject(method, instance);
-        return Marshal.PtrToStructure<Vector2Value>(IL2CPP.il2cpp_object_unbox(result));
-    }
-
-    private static Vector3Value InvokeVector3(IntPtr method, IntPtr instance)
-    {
-        var result = InvokeObject(method, instance);
-        return Marshal.PtrToStructure<Vector3Value>(IL2CPP.il2cpp_object_unbox(result));
-    }
-
-    private static void InvokeSetVector2(IntPtr method, IntPtr instance, Vector2Value value)
-    {
-        unsafe
-        {
-            var args = stackalloc void*[1];
-            args[0] = &value;
-            InvokeObjectUnsafe(method, instance, args);
-        }
-    }
-
-    private static void InvokeSetVector3(IntPtr method, IntPtr instance, Vector3Value value)
-    {
-        unsafe
-        {
-            var args = stackalloc void*[1];
-            args[0] = &value;
-            InvokeObjectUnsafe(method, instance, args);
-        }
-    }
-
     private static float Round(float value) => MathF.Round(value, 3);
-}
-
-[StructLayout(LayoutKind.Sequential)]
-internal struct Vector2Value
-{
-    public float X;
-    public float Y;
-}
-
-[StructLayout(LayoutKind.Sequential)]
-internal struct Vector3Value
-{
-    public float X;
-    public float Y;
-    public float Z;
 }
 
 internal sealed record ScannedUiElement(UiElement Element, IntPtr RectTransform);

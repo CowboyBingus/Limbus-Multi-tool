@@ -3,6 +3,7 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
+using LimbusShared;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Collections.Generic;
@@ -11,6 +12,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using static LimbusShared.NativeInterop;
 
 namespace LimbusFramePacingFix;
 
@@ -109,15 +111,9 @@ public sealed class Plugin : BasePlugin
         IsSet(allowDisplayModeChanges) &&
         IsSet(forceMaximizedWindow);
 
-    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name)
-    {
-        return entry ?? throw new InvalidOperationException($"{NAME} config entry '{name}' is not initialized.");
-    }
+    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => PluginConfig.Required(entry, NAME, name);
 
-    private static bool IsSet(ConfigEntry<bool>? entry)
-    {
-        return entry?.Value ?? false;
-    }
+    private static bool IsSet(ConfigEntry<bool>? entry) => PluginConfig.IsSet(entry);
 }
 
 internal static class FramePacingEnforcer
@@ -287,20 +283,7 @@ internal static class CanvasScalerFramePacingDetour
 
     public static void Uninstall()
     {
-        try
-        {
-            detour?.Undo();
-            detour?.Free();
-        }
-        catch
-        {
-            // Unload can race Unity teardown.
-        }
-        finally
-        {
-            detour = null;
-            original = null;
-        }
+        DetourLifecycle.Free(ref detour, ref original);
     }
 
     private static void OnEnableReplacement(IntPtr self, IntPtr methodInfo)
@@ -309,7 +292,6 @@ internal static class CanvasScalerFramePacingDetour
         FramePacingEnforcer.ApplyThrottled("CanvasScaler.OnEnable");
     }
 
-    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }
 
 internal static class NativeUnitySettings
@@ -386,51 +368,19 @@ internal static class NativeUnitySettings
         ref NativeDetour? detour,
         ref SetIntNativeDelegate? original)
     {
-        if (detour != null)
-            return;
-
-        if (method == IntPtr.Zero)
-        {
-            Plugin.Log.LogWarning($"{name} detour skipped: IL2CPP MethodInfo was not resolved.");
-            return;
-        }
-
-        try
-        {
-            var methodPointer = Marshal.ReadIntPtr(method);
-            if (methodPointer == IntPtr.Zero)
-            {
-                Plugin.Log.LogWarning($"{name} detour skipped: native method pointer was null.");
-                return;
-            }
-
-            detour = new NativeDetour(methodPointer, replacement);
-            original = detour.GenerateTrampoline<SetIntNativeDelegate>();
-            detour.Apply();
-            Plugin.Log.LogInfo($"{name} detour installed at {Ptr(methodPointer)}.");
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"{name} detour install failed: {ex.GetType().Name}: {ex.Message}");
-        }
+        DetourLifecycle.TryInstall(
+            name,
+            method,
+            replacement,
+            ref detour,
+            ref original,
+            message => Plugin.Log.LogWarning(message),
+            message => Plugin.Log.LogInfo(message));
     }
 
     private static void FreeDetour(ref NativeDetour? detour, ref SetIntNativeDelegate? original)
     {
-        try
-        {
-            detour?.Undo();
-            detour?.Free();
-        }
-        catch
-        {
-            // Plugin unload can happen while Unity is tearing down native state.
-        }
-        finally
-        {
-            detour = null;
-            original = null;
-        }
+        DetourLifecycle.Free(ref detour, ref original);
     }
 
     private static void SetTargetFrameRateDetour(int value, IntPtr methodInfo)
@@ -491,6 +441,17 @@ internal static class NativeUnitySettings
 
     private static bool InvokeStaticInt(IntPtr method, string name, int value, out string error)
     {
+        return InvokeStaticValue(method, name, value, out error);
+    }
+
+    private static bool InvokeStaticBool(IntPtr method, string name, bool value, out string error)
+    {
+        return InvokeStaticValue(method, name, value ? (byte)1 : (byte)0, out error);
+    }
+
+    private static bool InvokeStaticValue<T>(IntPtr method, string name, T value, out string error)
+        where T : unmanaged
+    {
         error = "";
         if (method == IntPtr.Zero)
         {
@@ -522,42 +483,6 @@ internal static class NativeUnitySettings
             return false;
         }
     }
-
-    private static bool InvokeStaticBool(IntPtr method, string name, bool value, out string error)
-    {
-        error = "";
-        if (method == IntPtr.Zero)
-        {
-            error = $"{name} method was not resolved.";
-            return false;
-        }
-
-        try
-        {
-            unsafe
-            {
-                var exc = IntPtr.Zero;
-                var local = value ? (byte)1 : (byte)0;
-                var args = stackalloc void*[1];
-                args[0] = &local;
-                IL2CPP.il2cpp_runtime_invoke(method, IntPtr.Zero, args, ref exc);
-                if (exc == IntPtr.Zero)
-                    return true;
-
-                error = $"IL2CPP exception {Ptr(exc)}";
-                Plugin.Log.LogWarning($"{name} runtime invoke failed: {error}");
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            error = $"{ex.GetType().Name}: {ex.Message}";
-            Plugin.Log.LogWarning($"{name} runtime invoke failed: {error}");
-            return false;
-        }
-    }
-
-    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }
 
 internal static class GameFrameRateDetours
@@ -598,8 +523,8 @@ internal static class GameFrameRateDetours
 
     public static void Uninstall()
     {
-        Free(ref applyFrameRateDetour, ref originalApplyFrameRate);
-        Free(ref sceneFrameRateDetour, ref originalSceneFrameRate);
+        DetourLifecycle.Free(ref applyFrameRateDetour, ref originalApplyFrameRate);
+        DetourLifecycle.Free(ref sceneFrameRateDetour, ref originalSceneFrameRate);
     }
 
     private static IntPtr FindMethod(IntPtr klass, string name, int argsCount)
@@ -610,52 +535,14 @@ internal static class GameFrameRateDetours
     private static void TryInstall<T>(string name, IntPtr method, T replacement, ref NativeDetour? detour, ref T? original)
         where T : Delegate
     {
-        if (detour != null)
-            return;
-
-        if (method == IntPtr.Zero)
-        {
-            Plugin.Log.LogWarning($"{name} detour skipped: IL2CPP MethodInfo was not resolved.");
-            return;
-        }
-
-        try
-        {
-            var methodPointer = Marshal.ReadIntPtr(method);
-            if (methodPointer == IntPtr.Zero)
-            {
-                Plugin.Log.LogWarning($"{name} detour skipped: native method pointer was null.");
-                return;
-            }
-
-            detour = new NativeDetour(methodPointer, replacement);
-            original = detour.GenerateTrampoline<T>();
-            detour.Apply();
-            Plugin.Log.LogInfo($"{name} detour installed at {Ptr(methodPointer)}.");
-        }
-        catch (Exception ex)
-        {
-            Plugin.Log.LogWarning($"{name} detour install failed: {ex.GetType().Name}: {ex.Message}");
-        }
-    }
-
-    private static void Free<T>(ref NativeDetour? detour, ref T? original)
-        where T : Delegate
-    {
-        try
-        {
-            detour?.Undo();
-            detour?.Free();
-        }
-        catch
-        {
-            // Plugin unload can happen while Unity is tearing down native state.
-        }
-        finally
-        {
-            detour = null;
-            original = null;
-        }
+        DetourLifecycle.TryInstall(
+            name,
+            method,
+            replacement,
+            ref detour,
+            ref original,
+            message => Plugin.Log.LogWarning(message),
+            message => Plugin.Log.LogInfo(message));
     }
 
     private static void ApplyFrameRateDetour(IntPtr self, byte isBattle, IntPtr methodInfo)
@@ -670,7 +557,6 @@ internal static class GameFrameRateDetours
         FramePacingEnforcer.Apply("GlobalGameManager.SetFrameRateOnSceneLoaded", forceLog: FramePacingState.DetourLogCount < 8);
     }
 
-    private static string Ptr(IntPtr ptr) => ptr == IntPtr.Zero ? "0x0" : "0x" + ptr.ToString("X");
 }
 
 internal static class Il2CppFrameDiagnostics
