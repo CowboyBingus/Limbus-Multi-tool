@@ -1,5 +1,14 @@
 namespace LimbusRuntimeUIInspector.Contracts.Api;
 
+internal static class InspectorApiContracts
+{
+    public static ApiResponse<T> Success<T>(T data) => new(true, data, null);
+
+    public static ApiResponse<T> Failure<T>(string error) => new(false, default, error);
+
+    public static bool HasEditTarget(EditRequest? request) => request?.Id > 0;
+}
+
 internal sealed class EditRequest
 {
     public int Id { get; set; }

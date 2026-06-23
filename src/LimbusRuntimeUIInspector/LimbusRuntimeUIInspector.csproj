@@ -21,6 +21,7 @@
     <Compile Include="CanvasRootRegistry.cs" />
     <Compile Include="ContentTypes.cs" />
     <Compile Include="ElementContracts.cs" />
+    <Compile Include="InspectorContracts.cs" />
     <Compile Include="InspectorJobs.cs" />
     <Compile Include="InspectorHost.cs" />
     <Compile Include="InspectorPage.cs" />
@@ -30,6 +31,7 @@
     <Compile Include="Plugin.cs" />
     <Compile Include="RectTransformCapture.cs" />
     <Compile Include="ScanContracts.cs" />
+    <Compile Include="UnityInspector.cs" />
     <Compile Include="UnityDetours.cs" />
     <Compile Include="UnityInteropNames.cs" />
     <Compile Include="UnityUiRuntime.cs" />

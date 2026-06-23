@@ -1,6 +1,6 @@
 using BepInEx.Configuration;
 using BepInEx.Logging;
-using LimbusShared.Configuration;
+using LimbusShared;
 using System;
 
 namespace LimbusFramePacingFix;
@@ -27,13 +27,13 @@ internal static class FramePacingHost
     public static ConfigEntry<bool> PatchGameFrameRateMethods => Settings.PatchGameFrameRateMethods;
     public static ConfigEntry<bool> DumpMetadataOnLoad => Settings.DumpMetadataOnLoad;
 
-    public static bool IsEnabled => PluginConfig.IsSet(settings?.Enabled);
-    public static bool ShouldApplyNativeUnitySettings => IsEnabled && PluginConfig.IsSet(settings?.ApplyNativeUnitySettings);
-    public static bool ShouldPatchGameFrameRateMethods => IsEnabled && PluginConfig.IsSet(settings?.PatchGameFrameRateMethods);
+    public static bool IsEnabled => SharedRuntime.IsSet(settings?.Enabled);
+    public static bool ShouldApplyNativeUnitySettings => IsEnabled && SharedRuntime.IsSet(settings?.ApplyNativeUnitySettings);
+    public static bool ShouldPatchGameFrameRateMethods => IsEnabled && SharedRuntime.IsSet(settings?.PatchGameFrameRateMethods);
     public static bool ShouldForceMaximizedWindow =>
         IsEnabled &&
-        PluginConfig.IsSet(settings?.AllowDisplayModeChanges) &&
-        PluginConfig.IsSet(settings?.ForceMaximizedWindow);
+        SharedRuntime.IsSet(settings?.AllowDisplayModeChanges) &&
+        SharedRuntime.IsSet(settings?.ForceMaximizedWindow);
 
     public static void Initialize(ManualLogSource source, FramePacingSettings hostSettings)
     {

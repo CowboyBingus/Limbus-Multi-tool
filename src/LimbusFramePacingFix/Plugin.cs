@@ -2,8 +2,7 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
-using LimbusShared.Configuration;
-using LimbusShared.Detours;
+using LimbusShared;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Collections.Generic;
@@ -111,7 +110,7 @@ public sealed class Plugin : BasePlugin
         dumpMetadataOnLoad = config.Bind(DiagnosticsSection, "DumpMetadataOnLoad", false, "Writes an IL2CPP frame/display metadata scan for reverse engineering. Leave off for normal play.");
     }
 
-    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => PluginConfig.Required(entry, NAME, name);
+    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => SharedRuntime.Required(entry, NAME, name);
 }
 
 internal static class FramePacingEnforcer
@@ -281,7 +280,7 @@ internal static class CanvasScalerFramePacingDetour
 
     public static void Uninstall()
     {
-        DetourLifecycle.Free(ref detour, ref original);
+        SharedRuntime.FreeDetour(ref detour, ref original);
     }
 
     private static void OnEnableReplacement(IntPtr self, IntPtr methodInfo)
@@ -366,7 +365,7 @@ internal static class NativeUnitySettings
         ref NativeDetour? detour,
         ref SetIntNativeDelegate? original)
     {
-        DetourLifecycle.TryInstall(
+        SharedRuntime.TryInstallDetour(
             name,
             method,
             replacement,
@@ -378,7 +377,7 @@ internal static class NativeUnitySettings
 
     private static void FreeDetour(ref NativeDetour? detour, ref SetIntNativeDelegate? original)
     {
-        DetourLifecycle.Free(ref detour, ref original);
+        SharedRuntime.FreeDetour(ref detour, ref original);
     }
 
     private static void SetTargetFrameRateDetour(int value, IntPtr methodInfo)
@@ -521,8 +520,8 @@ internal static class GameFrameRateDetours
 
     public static void Uninstall()
     {
-        DetourLifecycle.Free(ref applyFrameRateDetour, ref originalApplyFrameRate);
-        DetourLifecycle.Free(ref sceneFrameRateDetour, ref originalSceneFrameRate);
+        SharedRuntime.FreeDetour(ref applyFrameRateDetour, ref originalApplyFrameRate);
+        SharedRuntime.FreeDetour(ref sceneFrameRateDetour, ref originalSceneFrameRate);
     }
 
     private static IntPtr FindMethod(IntPtr klass, string name, int argsCount)
@@ -533,7 +532,7 @@ internal static class GameFrameRateDetours
     private static void TryInstall<T>(string name, IntPtr method, T replacement, ref NativeDetour? detour, ref T? original)
         where T : Delegate
     {
-        DetourLifecycle.TryInstall(
+        SharedRuntime.TryInstallDetour(
             name,
             method,
             replacement,

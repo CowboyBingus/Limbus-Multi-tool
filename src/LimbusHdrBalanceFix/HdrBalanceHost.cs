@@ -1,6 +1,6 @@
 using BepInEx.Configuration;
 using BepInEx.Logging;
-using LimbusShared.Configuration;
+using LimbusShared;
 using System;
 
 namespace LimbusHdrBalanceFix;
@@ -28,7 +28,7 @@ internal static class HdrBalanceHost
     public static ConfigEntry<bool> ForceParameterOverrides => Settings.ForceParameterOverrides;
     public static ConfigEntry<bool> DebugLogging => Settings.DebugLogging;
 
-    public static bool IsEnabled => PluginConfig.IsSet(settings?.Enabled);
+    public static bool IsEnabled => SharedRuntime.IsSet(settings?.Enabled);
 
     public static void Initialize(ManualLogSource source, HdrBalanceSettings hostSettings)
     {
@@ -38,7 +38,7 @@ internal static class HdrBalanceHost
 
     public static void Debug(string message)
     {
-        if (PluginConfig.IsSet(settings?.DebugLogging))
+        if (SharedRuntime.IsSet(settings?.DebugLogging))
             Log.LogInfo($"[debug] {message}");
     }
 

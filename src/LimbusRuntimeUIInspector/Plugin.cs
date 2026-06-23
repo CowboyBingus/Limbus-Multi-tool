@@ -2,10 +2,8 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using LimbusRuntimeUIInspector.Server;
-using LimbusRuntimeUIInspector.Unity.Detours;
-using LimbusRuntimeUIInspector.Unity.Runtime;
-using LimbusRuntimeUIInspector.Unity.Tracking;
-using LimbusShared.Configuration;
+using LimbusRuntimeUIInspector.Unity;
+using LimbusShared;
 using System;
 
 namespace LimbusRuntimeUIInspector;
@@ -33,17 +31,12 @@ public sealed class Plugin : BasePlugin
     {
         BindConfig(Config);
         InspectorHost.Initialize(base.Log, MaxResults, DebugLogging);
-        CanvasRootRegistry.Configure(
-            UnityUiRuntime.TryGetTransformFromComponent,
-            UnityUiRuntime.TryGetTransformFromGameObject,
-            UnityUiRuntime.TryGetTopmostTransform);
+        UnityInspector.ConfigureRootTracking();
 
         InspectorHost.Debug("Load begin.");
         if (Enabled.Value)
         {
-            CanvasRootObserveDetour.Install();
-            RectTransformRootObserveDetour.Install();
-            GameObjectRootObserveDetour.Install();
+            UnityInspector.InstallRootObservers();
             InspectorServer.Start(Port.Value);
         }
 
@@ -53,10 +46,7 @@ public sealed class Plugin : BasePlugin
     public override bool Unload()
     {
         InspectorServer.Stop();
-        UnityPumpDetour.Uninstall();
-        GameObjectRootObserveDetour.Uninstall();
-        RectTransformRootObserveDetour.Uninstall();
-        CanvasRootObserveDetour.Uninstall();
+        UnityInspector.UninstallDetours();
         return true;
     }
 
@@ -69,6 +59,6 @@ public sealed class Plugin : BasePlugin
         debugLogging = config.Bind("Diagnostics", "DebugLogging", true, "Writes detailed inspector server and scan/edit job lifecycle logs.");
     }
 
-    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => PluginConfig.Required(entry, NAME, name);
+    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => SharedRuntime.Required(entry, NAME, name);
 
 }

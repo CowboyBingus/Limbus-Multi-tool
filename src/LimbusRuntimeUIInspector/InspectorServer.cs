@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using LimbusRuntimeUIInspector.Contracts;
 using LimbusRuntimeUIInspector.Contracts.Api;
 using LimbusRuntimeUIInspector.Contracts.Jobs;
 using LimbusRuntimeUIInspector.Jobs;
@@ -107,7 +108,7 @@ internal static class InspectorServer
             catch (Exception ex)
             {
                 InspectorHost.Log.LogWarning($"Inspector request failed: {ex}");
-                WriteResponse(stream, 500, ContentTypes.Json, JsonSerializer.Serialize(new ApiResponse<object>(false, null, ex.Message), JsonOptions.Default));
+                WriteResponse(stream, 500, ContentTypes.Json, JsonSerializer.Serialize(InspectorContracts.Failure(ex.Message), JsonOptions.Default));
             }
         }
     }
@@ -148,7 +149,7 @@ internal static class InspectorServer
         var includeTransforms = !request.Query.TryGetValue("includeTransforms", out var transforms) || transforms == "1";
         var maxResults = GetRequestedMaxResults(request);
         var job = InspectorJobs.QueueScan(filter, includeInactive, includeTransforms, maxResults);
-        WriteJson(stream, 200, new ApiResponse<JobSnapshot>(true, job, null));
+        WriteJson(stream, 200, InspectorContracts.Success(job));
         InspectorHost.Debug($"HTTP {requestId} queued scan job {job.JobId}.");
         return true;
     }
@@ -171,7 +172,7 @@ internal static class InspectorServer
             return true;
         }
 
-        WriteJson(stream, 200, new ApiResponse<JobSnapshot>(true, snapshot, null));
+        WriteJson(stream, 200, InspectorContracts.Success(snapshot));
         InspectorHost.Debug($"HTTP {requestId} returned job {jobId} state={snapshot.State}.");
         return true;
     }
@@ -182,15 +183,16 @@ internal static class InspectorServer
             return false;
 
         var edit = JsonSerializer.Deserialize<EditRequest>(request.Body, JsonOptions.Default);
-        if (edit == null || edit.Id == 0)
+        if (!InspectorContracts.HasEditTarget(edit))
         {
-            WriteResponse(stream, 400, ContentTypes.Json, "{\"ok\":false,\"error\":\"Missing element id.\"}");
+            WriteJson(stream, 400, InspectorContracts.Failure("Missing element id."));
             return true;
         }
 
-        var job = InspectorJobs.QueueEdit(edit);
-        WriteJson(stream, 200, new ApiResponse<JobSnapshot>(true, job, null));
-        InspectorHost.Debug($"HTTP {requestId} queued edit job {job.JobId} for id={edit.Id}.");
+        var editRequest = edit!;
+        var job = InspectorJobs.QueueEdit(editRequest);
+        WriteJson(stream, 200, InspectorContracts.Success(job));
+        InspectorHost.Debug($"HTTP {requestId} queued edit job {job.JobId} for id={editRequest.Id}.");
         return true;
     }
 

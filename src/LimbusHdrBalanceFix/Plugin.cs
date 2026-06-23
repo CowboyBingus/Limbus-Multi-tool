@@ -2,8 +2,7 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
-using LimbusShared.Configuration;
-using LimbusShared.Detours;
+using LimbusShared;
 using LimbusShared.Interop;
 using MonoMod.RuntimeDetour;
 using System;
@@ -116,7 +115,7 @@ public sealed class Plugin : BasePlugin
         debugLogging = config.Bind("Diagnostics", "DebugLogging", false, "Writes additional field/method resolution and patch diagnostics.");
     }
 
-    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => PluginConfig.Required(entry, NAME, name);
+    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => SharedRuntime.Required(entry, NAME, name);
 }
 
 internal static class CanvasRenderPumpDetour
@@ -171,7 +170,7 @@ internal static class CanvasRenderPumpDetour
 
     public static void Uninstall()
     {
-        DetourLifecycle.Free(ref detour, ref original);
+        SharedRuntime.FreeDetour(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr methodInfo)
@@ -261,7 +260,7 @@ internal static class VolumeOnEnableDetour
 
     public static void Uninstall()
     {
-        DetourLifecycle.Free(ref detour, ref original);
+        SharedRuntime.FreeDetour(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr self, IntPtr methodInfo)
@@ -322,7 +321,7 @@ internal static class VolumeProfileOnEnableDetour
 
     public static void Uninstall()
     {
-        DetourLifecycle.Free(ref detour, ref original);
+        SharedRuntime.FreeDetour(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr self, IntPtr methodInfo)

@@ -2,12 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
+using LimbusRuntimeUIInspector.Contracts;
 using LimbusRuntimeUIInspector.Contracts.Api;
 using LimbusRuntimeUIInspector.Contracts.Elements;
 using LimbusRuntimeUIInspector.Contracts.Jobs;
-using LimbusRuntimeUIInspector.Unity.Capture;
-using LimbusRuntimeUIInspector.Unity.Detours;
-using LimbusRuntimeUIInspector.Unity.Runtime;
+using LimbusRuntimeUIInspector.Unity;
 
 namespace LimbusRuntimeUIInspector.Jobs;
 
@@ -55,7 +54,7 @@ internal static class InspectorJobs
         lock (sync)
         {
             jobs[job.JobId] = job;
-            if (UnityPumpDetour.EnsureInstalled(Pump))
+            if (UnityInspector.EnsurePumpInstalled(Pump))
             {
                 pending.Enqueue(job);
                 InspectorHost.Log.LogInfo($"Inspector {job.Kind} job {job.JobId} queued.");
@@ -115,16 +114,16 @@ internal sealed class InspectorJob
         {
             if (Kind == "scan")
             {
-                var scan = UnityUiRuntime.ScanObservedRoots(Filter, IncludeInactive, IncludeTransforms, MaxResults);
-                RectTransformCapture.ReplaceScanCache(scan.Elements);
-                CompleteScan(scan.Elements.ConvertAll(item => item.Element), $"live-roots roots={scan.RootCount} visited={scan.VisitedCount} matched={scan.MatchedCount} returnedTransforms={scan.TransformOnlyCount} truncated={scan.Truncated} readFailures={scan.ReadFailureCount}");
+                var scan = UnityInspector.ScanObservedRoots(Filter, IncludeInactive, IncludeTransforms, MaxResults);
+                UnityInspector.ReplaceScanCache(scan.Elements);
+                CompleteScan(InspectorContracts.ElementsFromScan(scan), $"live-roots roots={scan.RootCount} visited={scan.VisitedCount} matched={scan.MatchedCount} returnedTransforms={scan.TransformOnlyCount} truncated={scan.Truncated} readFailures={scan.ReadFailureCount}");
             }
             else if (edit != null)
             {
-                if (!RectTransformCapture.TryGetRect(edit.Id, out var rect))
+                if (!UnityInspector.TryGetRect(edit.Id, out var rect))
                     throw new InvalidOperationException($"Element id {edit.Id} is not in the inspector cache. Run a scan first and select a captured element.");
 
-                element = UnityUiRuntime.ApplyEdit(edit, rect);
+                element = UnityInspector.ApplyEdit(edit, rect);
                 InspectorHost.Log.LogInfo($"Inspector edit job {JobId} complete: id={edit.Id}, elapsedMs={stopwatch.ElapsedMilliseconds}.");
             }
 
@@ -152,7 +151,7 @@ internal sealed class InspectorJob
         foreach (var item in elements)
             scanElements[item.Id] = item;
 
-        result = new ElementList(scanElements.Count, new List<UiElement>(elements));
+        result = InspectorContracts.ElementList(new List<UiElement>(elements));
         State = "complete";
         stopwatch.Stop();
         InspectorHost.Log.LogInfo($"Inspector scan job {JobId} complete ({reason}): count={result.Count}, elapsedMs={stopwatch.ElapsedMilliseconds}.");

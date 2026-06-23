@@ -1,5 +1,5 @@
 using Il2CppInterop.Runtime;
-using LimbusShared.Detours;
+using LimbusShared;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Runtime.InteropServices;
@@ -8,6 +8,26 @@ using LimbusRuntimeUIInspector.Unity.Tracking;
 using static LimbusShared.Interop.NativeInterop;
 
 namespace LimbusRuntimeUIInspector.Unity.Detours;
+
+internal static class UnityRootDetours
+{
+    public static bool EnsurePumpInstalled(Action pumpAction) => UnityPumpDetour.EnsureInstalled(pumpAction);
+
+    public static void InstallObservers()
+    {
+        CanvasRootObserveDetour.Install();
+        RectTransformRootObserveDetour.Install();
+        GameObjectRootObserveDetour.Install();
+    }
+
+    public static void UninstallAll()
+    {
+        UnityPumpDetour.Uninstall();
+        GameObjectRootObserveDetour.Uninstall();
+        RectTransformRootObserveDetour.Uninstall();
+        CanvasRootObserveDetour.Uninstall();
+    }
+}
 
 internal static class UnityPumpDetour
 {
@@ -66,7 +86,7 @@ internal static class UnityPumpDetour
     public static void Uninstall()
     {
         pump = null;
-        DetourLifecycle.Free(ref detour, ref original);
+        SharedRuntime.FreeDetour(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr methodInfo)
@@ -144,7 +164,7 @@ internal static class CanvasRootObserveDetour
 
     public static void Uninstall()
     {
-        DetourLifecycle.Free(ref detour, ref original);
+        SharedRuntime.FreeDetour(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr self, IntPtr methodInfo)
@@ -208,7 +228,7 @@ internal static class RectTransformRootObserveDetour
 
     public static void Uninstall()
     {
-        DetourLifecycle.Free(ref detour, ref original);
+        SharedRuntime.FreeDetour(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr rectTransform, IntPtr methodInfo)
@@ -272,7 +292,7 @@ internal static class GameObjectRootObserveDetour
 
     public static void Uninstall()
     {
-        DetourLifecycle.Free(ref detour, ref original);
+        SharedRuntime.FreeDetour(ref detour, ref original);
     }
 
     private static void Replacement(IntPtr self, byte active, IntPtr methodInfo)

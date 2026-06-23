@@ -2,7 +2,7 @@ using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
-using LimbusShared.Detours;
+using LimbusShared;
 using LimbusShared.Interop;
 using LimbusShared.Unity;
 using MonoMod.RuntimeDetour;
@@ -137,7 +137,7 @@ namespace LimbusCanvasFix
 
         public static void Uninstall()
         {
-            DetourLifecycle.Free(ref detour, ref original);
+            SharedRuntime.FreeDetour(ref detour, ref original);
         }
 
         private static void OnEnableReplacement(IntPtr self, IntPtr methodInfo)
@@ -193,7 +193,7 @@ namespace LimbusCanvasFix
 
         public static void Uninstall()
         {
-            DetourLifecycle.Free(ref detour, ref original);
+            SharedRuntime.FreeDetour(ref detour, ref original);
         }
 
         private static void Replacement(IntPtr rectTransform, IntPtr methodInfo)
@@ -287,9 +287,9 @@ namespace LimbusCanvasFix
 
         public static void Uninstall()
         {
-            DetourLifecycle.Free(ref anchoredPositionDetour, ref anchoredPositionOriginal);
-            DetourLifecycle.Free(ref sizeDeltaDetour, ref sizeDeltaOriginal);
-            DetourLifecycle.Free(ref localScaleDetour, ref localScaleOriginal);
+            SharedRuntime.FreeDetour(ref anchoredPositionDetour, ref anchoredPositionOriginal);
+            SharedRuntime.FreeDetour(ref sizeDeltaDetour, ref sizeDeltaOriginal);
+            SharedRuntime.FreeDetour(ref localScaleDetour, ref localScaleOriginal);
         }
 
         private static void InstallOne<T>(
