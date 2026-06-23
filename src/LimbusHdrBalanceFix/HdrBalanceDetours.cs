@@ -48,12 +48,13 @@ internal static class CanvasRenderPumpDetour
     public static void Install()
     {
         HdrNativeDetour.TryInstall(
-            "HDR balance pump",
-            "UnityEngine.UIModule.dll",
-            "UnityEngine",
-            "Canvas",
-            "SendWillRenderCanvases",
-            0,
+            new HdrNativeDetourTarget(
+                "HDR balance pump",
+                "UnityEngine.UIModule.dll",
+                "UnityEngine",
+                "Canvas",
+                "SendWillRenderCanvases",
+                0),
             replacement,
             ref detour,
             ref original);
@@ -129,12 +130,13 @@ internal sealed class HdrInstanceOnEnableDetour
     public void Install()
     {
         HdrNativeDetour.TryInstall(
-            name,
-            "Unity.RenderPipelines.Core.Runtime.dll",
-            "UnityEngine.Rendering",
-            typeName,
-            "OnEnable",
-            0,
+            new HdrNativeDetourTarget(
+                name,
+                "Unity.RenderPipelines.Core.Runtime.dll",
+                "UnityEngine.Rendering",
+                typeName,
+                "OnEnable",
+                0),
             replacement,
             ref detour,
             ref original);

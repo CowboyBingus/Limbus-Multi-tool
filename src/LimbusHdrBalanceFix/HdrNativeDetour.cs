@@ -5,15 +5,18 @@ using System;
 
 namespace LimbusHdrBalanceFix;
 
+internal readonly record struct HdrNativeDetourTarget(
+    string Name,
+    string Assembly,
+    string TypeNamespace,
+    string TypeName,
+    string MethodName,
+    int ArgumentCount);
+
 internal static class HdrNativeDetour
 {
     public static bool TryInstall<T>(
-        string name,
-        string assembly,
-        string typeNamespace,
-        string typeName,
-        string methodName,
-        int argumentCount,
+        HdrNativeDetourTarget target,
         T replacement,
         ref NativeDetour? detour,
         ref T? original)
@@ -22,16 +25,16 @@ internal static class HdrNativeDetour
         if (detour != null)
             return true;
 
-        var klass = IL2CPP.GetIl2CppClass(assembly, typeNamespace, typeName);
+        var klass = IL2CPP.GetIl2CppClass(target.Assembly, target.TypeNamespace, target.TypeName);
         if (klass == IntPtr.Zero)
         {
-            HdrBalanceHost.Log.LogWarning($"{name} skipped: {typeNamespace}.{typeName} class was not resolved.");
+            HdrBalanceHost.Log.LogWarning($"{target.Name} skipped: {target.TypeNamespace}.{target.TypeName} class was not resolved.");
             return false;
         }
 
-        var method = IL2CPP.il2cpp_class_get_method_from_name(klass, methodName, argumentCount);
+        var method = IL2CPP.il2cpp_class_get_method_from_name(klass, target.MethodName, target.ArgumentCount);
         return SharedRuntime.TryInstallDetour(
-            name,
+            target.Name,
             method,
             replacement,
             ref detour,
