@@ -17,7 +17,20 @@
 
   <ItemGroup>
     <Compile Include="..\Shared\NativeInterop.cs" />
+    <Compile Include="CanvasRootRegistry.cs" />
+    <Compile Include="Common.cs" />
+    <Compile Include="Contracts.cs" />
+    <Compile Include="InspectorJobs.cs" />
+    <Compile Include="InspectorPage.cs" />
+    <Compile Include="InspectorServer.cs" />
+    <Compile Include="JsonOptions.cs" />
     <Compile Include="Plugin.cs" />
+    <Compile Include="RectTransformCapture.cs" />
+    <Compile Include="UnityDetours.cs" />
+    <Compile Include="UnityUiRuntime.cs" />
+    <Compile Include="UnityUiRuntime.Edit.cs" />
+    <Compile Include="UnityUiRuntime.Read.cs" />
+    <Compile Include="UnityUiRuntime.Scan.cs" />
   </ItemGroup>
 
   <ItemGroup>

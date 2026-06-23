@@ -775,17 +775,16 @@ namespace LimbusCanvasFix
 
         private static string BuildPath(IntPtr transform)
         {
-            var names = new List<string>();
+            var names = new Stack<string>();
             var current = transform;
             for (var depth = 0; depth < MaxPathDepth && current != IntPtr.Zero; depth++)
             {
                 var name = Il2CppInvoke.String(objectGetName, current);
                 if (!string.IsNullOrWhiteSpace(name))
-                    names.Add(name);
+                    names.Push(name);
                 current = Il2CppInvoke.Object(transformGetParent, current);
             }
 
-            names.Reverse();
             return "/" + string.Join("/", names);
         }
 

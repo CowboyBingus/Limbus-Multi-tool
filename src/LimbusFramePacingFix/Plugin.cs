@@ -587,12 +587,6 @@ internal static class Il2CppFrameDiagnostics
             }
 
             var result = BuildMetadataReport(domain);
-            if (result == null)
-            {
-                Plugin.Log.LogWarning("IL2CPP metadata scan skipped: no assemblies were visible.");
-                return;
-            }
-
             WriteMetadataReport(result.Report, result.MatchedTypes);
         }
         catch (Exception ex)
@@ -601,15 +595,12 @@ internal static class Il2CppFrameDiagnostics
         }
     }
 
-    private static MetadataScanResult? BuildMetadataReport(IntPtr domain)
+    private static MetadataScanResult BuildMetadataReport(IntPtr domain)
     {
         unsafe
         {
             uint assemblyCount = 0;
             var assemblies = IL2CPP.il2cpp_domain_get_assemblies(domain, ref assemblyCount);
-            if (assemblyCount == 0)
-                return null;
-
             var report = CreateMetadataReport(assemblyCount);
             var matchedTypes = AppendAssemblyMetadata(report, assemblies, assemblyCount);
             return new MetadataScanResult(report, matchedTypes);
