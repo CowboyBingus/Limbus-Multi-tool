@@ -4,9 +4,9 @@
 //
 // The bug: Il2CppMethodSpec.MethodDefinition does theMetadata.methodDefs[methodDefinitionIndex]
 // without bounds-checking. When PM's binary contains a method spec whose
-// methodDefinitionIndex >= methodDefs.Length, the whole interop generation aborts.
+// methodDefinitionIndex is outside the methodDefs array, the whole interop generation aborts.
 //
-// Fix: wrap GetGenericMethodFromIndex in try { ... } catch { return -1; }.
+// The wrapper makes failed GetGenericMethodFromIndex entries return -1.
 // Generic-method spec entries that fail get skipped; the rest of the metadata
 // parses normally, which is enough for our plugin (which only patches
 // Unity-stock CanvasScaler).
@@ -23,6 +23,9 @@ namespace PatchLibCpp;
 
 public static class Program
 {
+    private const string AsmResolverAssemblyPopulatorType = "Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator";
+    private const string Il2CppBinaryType = "LibCpp2IL.Il2CppBinary";
+
     public static int Main(string[] args)
     {
         string coreDir = args.Length > 0
@@ -126,21 +129,21 @@ public static class Program
             // during analysis but are absent from AsmResolverUtils' type-definition
             // cache. Missing hierarchy/generic wiring is better than aborting DLL
             // generation before any interop assemblies are written.
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "ConfigureHierarchy", 1, 0),
+            (AsmResolverAssemblyPopulatorType, "ConfigureHierarchy", 1, 0),
             // Same idea one level later: if a type's field/method signature points
             // at invalid metadata, leave that managed stub type sparse and keep
             // generating the rest of the assembly set.
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "CopyDataFromIl2CppToManaged", 1, 0),
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "CopyIl2CppDataToManagedType", 2, 0),
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "CopyFieldsInType", 3, 0),
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "CopyMethodsInType", 3, 0),
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "CopyPropertiesInType", 3, 0),
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "CopyEventsInType", 3, 0),
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "PopulateGenericParamsForType", 2, 0),
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "AddExplicitInterfaceImplementations", 1, 0),
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "AddExplicitInterfaceImplementations", 3, 0),
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "PopulateCustomAttributes", 1, 0),
-            ("Cpp2IL.Core.Utils.AsmResolver.AsmResolverAssemblyPopulator", "CopyCustomAttributes", 2, 0),
+            (AsmResolverAssemblyPopulatorType, "CopyDataFromIl2CppToManaged", 1, 0),
+            (AsmResolverAssemblyPopulatorType, "CopyIl2CppDataToManagedType", 2, 0),
+            (AsmResolverAssemblyPopulatorType, "CopyFieldsInType", 3, 0),
+            (AsmResolverAssemblyPopulatorType, "CopyMethodsInType", 3, 0),
+            (AsmResolverAssemblyPopulatorType, "CopyPropertiesInType", 3, 0),
+            (AsmResolverAssemblyPopulatorType, "CopyEventsInType", 3, 0),
+            (AsmResolverAssemblyPopulatorType, "PopulateGenericParamsForType", 2, 0),
+            (AsmResolverAssemblyPopulatorType, "AddExplicitInterfaceImplementations", 1, 0),
+            (AsmResolverAssemblyPopulatorType, "AddExplicitInterfaceImplementations", 3, 0),
+            (AsmResolverAssemblyPopulatorType, "PopulateCustomAttributes", 1, 0),
+            (AsmResolverAssemblyPopulatorType, "CopyCustomAttributes", 2, 0),
         };
 
         foreach (var (typeName, methodName, paramCount, maxDepth) in coreTargets)
@@ -224,10 +227,10 @@ public static class Program
         // forms a recursive chain via FullName.
         var targets = new (string TypeName, string MethodName, int ParamCount, int MaxDepth)[]
         {
-            ("LibCpp2IL.Il2CppBinary",                    "GetGenericMethodFromIndex",   2, 0),
-            ("LibCpp2IL.Il2CppBinary",                    "GetMethodPointer",            4, 0),
-            ("LibCpp2IL.Il2CppBinary",                    "GetCodegenModuleByName",      1, 0),
-            ("LibCpp2IL.Il2CppBinary",                    "GetCodegenModuleIndexByName", 1, 0),
+            (Il2CppBinaryType,                            "GetGenericMethodFromIndex",   2, 0),
+            (Il2CppBinaryType,                            "GetMethodPointer",            4, 0),
+            (Il2CppBinaryType,                            "GetCodegenModuleByName",      1, 0),
+            (Il2CppBinaryType,                            "GetCodegenModuleIndexByName", 1, 0),
             ("LibCpp2IL.Metadata.Il2CppMethodDefinition", "get_MethodPointer",           0, 0),
             ("LibCpp2IL.Metadata.Il2CppTypeDefinition",   "get_DeclaringType",           0, 0),
             // get_FullName recurses via DeclaringType.FullName — that's the actual
@@ -519,16 +522,8 @@ public static class Program
         body.MaxStackSize = 0;
     }
 
-    // Replace LibCpp2IL.BinaryStructures.Il2CppType.GetGenericParameterDef body.
-    // Original:
-    //   var p = GenericParameter ?? throw new Exception("Type is not a generic parameter");
-    //   Debug.Assert(p.Type == Type);                  // <-- uncatchable on failure
-    //   return p;
-    //
-    // New body skips the assertion (still throws the catchable Exception on null):
-    //   var p = GenericParameter;
-    //   if (p == null) throw new Exception("Type is not a generic parameter");
-    //   return p;
+    // Replace LibCpp2IL.BinaryStructures.Il2CppType.GetGenericParameterDef with
+    // a body that keeps the null guard but skips the uncatchable Debug.Assert.
     static void ReplaceGetGenericParameterDef(ModuleDefinition module)
     {
         var t = module.GetType("LibCpp2IL.BinaryStructures.Il2CppType");
@@ -554,25 +549,16 @@ public static class Program
         m.Body = newBody;
         var il = newBody.GetILProcessor();
 
-        // ldarg.0 ; this
         il.Append(il.Create(OpCodes.Ldarg_0));
-        // call get_GenericParameter
         il.Append(il.Create(OpCodes.Call, getGenericParam));
-        // dup
         il.Append(il.Create(OpCodes.Dup));
-        // brtrue NOTNULL
         var notNull = il.Create(OpCodes.Ret);   // sentinel; we'll change to nop+ret pattern below
         var brtrue = il.Create(OpCodes.Brtrue, notNull);
         il.Append(brtrue);
-        // pop (the duplicated null)
         il.Append(il.Create(OpCodes.Pop));
-        // ldstr "Type is not a generic parameter"
         il.Append(il.Create(OpCodes.Ldstr, "Type is not a generic parameter"));
-        // newobj Exception(string)
         il.Append(il.Create(OpCodes.Newobj, exceptionCtor));
-        // throw
         il.Append(il.Create(OpCodes.Throw));
-        // NOTNULL: ret  (returns the dup-preserved non-null value)
         il.Append(notNull);
 
         newBody.MaxStackSize = 0;
@@ -620,7 +606,7 @@ public static class Program
             case float f:                  return il.Create(src.OpCode, f);
             case double d:                 return il.Create(src.OpCode, d);
             default:
-                throw new Exception($"Unhandled operand type: {src.Operand?.GetType().FullName}");
+                throw new InvalidOperationException($"Unhandled operand type: {src.Operand?.GetType().FullName}");
         }
     }
 
@@ -629,55 +615,100 @@ public static class Program
     // original method has no body — the caller must build a new wrapper body.
     static MethodDefinition ExtractInnerMethod(MethodDefinition method)
     {
-        var module        = method.Module;
         var declaringType = method.DeclaringType;
-        var innerName     = method.Name + "__Inner";
-        var innerAttrs    = (method.Attributes & ~MethodAttributes.MemberAccessMask) | MethodAttributes.Private;
-        var innerMethod   = new MethodDefinition(innerName, innerAttrs, method.ReturnType);
-        foreach (var p in method.Parameters)
-            innerMethod.Parameters.Add(new ParameterDefinition(p.Name, p.Attributes, p.ParameterType));
-        foreach (var gp in method.GenericParameters)
-        {
-            var ngp = new GenericParameter(gp.Name, innerMethod);
-            foreach (var c in gp.Constraints) ngp.Constraints.Add(c);
-            innerMethod.GenericParameters.Add(ngp);
-        }
-
+        var innerMethod = CreateInnerMethodSignature(method);
         var oldBody = method.Body;
         var innerBody = new MethodBody(innerMethod) { InitLocals = oldBody.InitLocals };
-        foreach (var v in oldBody.Variables) innerBody.Variables.Add(new VariableDefinition(v.VariableType));
-        var innerIl = innerBody.GetILProcessor();
-        var oldToNew = new Dictionary<Instruction, Instruction>();
-        foreach (var ins in oldBody.Instructions)
-        {
-            Instruction clone;
-            if (ins.Operand is null) clone = innerIl.Create(ins.OpCode);
-            else clone = CloneWithOperand(innerIl, ins);
-            oldToNew[ins] = clone;
-            innerIl.Append(clone);
-        }
-        foreach (var ins in oldBody.Instructions)
-        {
-            var clone = oldToNew[ins];
-            if (ins.Operand is Instruction targ) clone.Operand = oldToNew[targ];
-            else if (ins.Operand is Instruction[] targs) clone.Operand = targs.Select(t => oldToNew[t]).ToArray();
-        }
-        foreach (var eh in oldBody.ExceptionHandlers)
-        {
-            var newEh = new ExceptionHandler(eh.HandlerType)
-            {
-                CatchType    = eh.CatchType,
-                FilterStart  = eh.FilterStart  != null ? oldToNew[eh.FilterStart]  : null,
-                TryStart     = eh.TryStart     != null ? oldToNew[eh.TryStart]     : null,
-                TryEnd       = eh.TryEnd       != null ? oldToNew[eh.TryEnd]       : null,
-                HandlerStart = eh.HandlerStart != null ? oldToNew[eh.HandlerStart] : null,
-                HandlerEnd   = eh.HandlerEnd   != null ? oldToNew[eh.HandlerEnd]   : null,
-            };
-            innerBody.ExceptionHandlers.Add(newEh);
-        }
+
+        CopyVariables(oldBody, innerBody);
+        var oldToNew = CloneInstructions(oldBody, innerBody);
+        FixClonedInstructionOperands(oldBody, oldToNew);
+        CopyExceptionHandlers(oldBody, innerBody, oldToNew);
+
         innerMethod.Body = innerBody;
         declaringType.Methods.Add(innerMethod);
         return innerMethod;
+    }
+
+    static MethodDefinition CreateInnerMethodSignature(MethodDefinition method)
+    {
+        var innerName = method.Name + "__Inner";
+        var innerAttrs = (method.Attributes & ~MethodAttributes.MemberAccessMask) | MethodAttributes.Private;
+        var innerMethod = new MethodDefinition(innerName, innerAttrs, method.ReturnType);
+        foreach (var parameter in method.Parameters)
+            innerMethod.Parameters.Add(new ParameterDefinition(parameter.Name, parameter.Attributes, parameter.ParameterType));
+        foreach (var genericParameter in method.GenericParameters)
+            CopyGenericParameter(innerMethod, genericParameter);
+
+        return innerMethod;
+    }
+
+    static void CopyGenericParameter(MethodDefinition innerMethod, GenericParameter source)
+    {
+        var copy = new GenericParameter(source.Name, innerMethod);
+        foreach (var constraint in source.Constraints)
+            copy.Constraints.Add(constraint);
+        innerMethod.GenericParameters.Add(copy);
+    }
+
+    static void CopyVariables(MethodBody source, MethodBody target)
+    {
+        foreach (var variable in source.Variables)
+            target.Variables.Add(new VariableDefinition(variable.VariableType));
+    }
+
+    static Dictionary<Instruction, Instruction> CloneInstructions(MethodBody source, MethodBody target)
+    {
+        var il = target.GetILProcessor();
+        var oldToNew = new Dictionary<Instruction, Instruction>();
+        foreach (var instruction in source.Instructions)
+        {
+            var clone = instruction.Operand is null
+                ? il.Create(instruction.OpCode)
+                : CloneWithOperand(il, instruction);
+            oldToNew[instruction] = clone;
+            il.Append(clone);
+        }
+
+        return oldToNew;
+    }
+
+    static void FixClonedInstructionOperands(MethodBody source, Dictionary<Instruction, Instruction> oldToNew)
+    {
+        foreach (var instruction in source.Instructions)
+        {
+            var clone = oldToNew[instruction];
+            if (instruction.Operand is Instruction target)
+                clone.Operand = oldToNew[target];
+            else if (instruction.Operand is Instruction[] targets)
+                clone.Operand = targets.Select(target => oldToNew[target]).ToArray();
+        }
+    }
+
+    static void CopyExceptionHandlers(
+        MethodBody source,
+        MethodBody target,
+        IReadOnlyDictionary<Instruction, Instruction> oldToNew)
+    {
+        foreach (var handler in source.ExceptionHandlers)
+        {
+            target.ExceptionHandlers.Add(new ExceptionHandler(handler.HandlerType)
+            {
+                CatchType = handler.CatchType,
+                FilterStart = Remap(handler.FilterStart, oldToNew),
+                TryStart = Remap(handler.TryStart, oldToNew),
+                TryEnd = Remap(handler.TryEnd, oldToNew),
+                HandlerStart = Remap(handler.HandlerStart, oldToNew),
+                HandlerEnd = Remap(handler.HandlerEnd, oldToNew),
+            });
+        }
+    }
+
+    static Instruction Remap(
+        Instruction instruction,
+        IReadOnlyDictionary<Instruction, Instruction> oldToNew)
+    {
+        return instruction != null ? oldToNew[instruction] : null;
     }
 
     // Emit ldarg.0..N appending to `il` to push `this` (if instance) and all parameters.
@@ -737,20 +768,8 @@ public static class Program
         // multiple rets, stack-shape preservation across leave instructions). The
         // outer wrapper is tiny, mechanically correct, and the same shape regardless
         // of the inner method's complexity.
-        //
-        // Outer body:
-        //   .locals init (T retLocal)
-        //   .try {
-        //       ldarg.0..N
-        //       call <name>__Inner
-        //       stloc retLocal
-        //       leave LDLOC
-        //   } catch [System.Exception] {
-        //       pop
-        //       leave LDLOC          ; retLocal stays at default(T)
-        //   }
-        //   LDLOC: ldloc retLocal
-        //          ret
+        // The generated body calls the inner method and falls back to the default
+        // return value when the inner method throws.
 
         var module        = method.Module;
         var exceptionType = module.ImportReference(typeof(Exception));
@@ -881,42 +900,40 @@ public static class Program
         newBody.Variables.Add(retLocal);
         var il = newBody.GetILProcessor();
 
-        // Trailing instructions used as branch targets:
-        //   afterTry:   ldsfld depthField  (start of decrement section)
-        //   ldlocFinal: ldloc retLocal     (start of EXIT / return)
+        // Trailing instructions are reused as branch targets.
         var ldlocFinal = il.Create(OpCodes.Ldloc, retLocal);
         var afterTry   = il.Create(OpCodes.Ldsfld, depthField);
 
-        // if (depth >= max) goto EXIT  (retLocal stays at default(T))
+        // Stop recursion at the configured depth and keep the default return value.
         il.Append(il.Create(OpCodes.Ldsfld, depthField));
         il.Append(il.Create(OpCodes.Ldc_I4, maxDepth));
         il.Append(il.Create(OpCodes.Bge, ldlocFinal));
 
-        // depth++
+        // Increase tracked recursion depth before calling the inner body.
         il.Append(il.Create(OpCodes.Ldsfld, depthField));
         il.Append(il.Create(OpCodes.Ldc_I4_1));
         il.Append(il.Create(OpCodes.Add));
         il.Append(il.Create(OpCodes.Stsfld, depthField));
 
-        // .try { ldargs; call __Inner; stloc retLocal; leave afterTry }
+        // Begin the guarded inner call.
         var tryStart = AppendArgLoads(il, method);
         il.Append(il.Create(OpCodes.Call, innerMethod));
         il.Append(il.Create(OpCodes.Stloc, retLocal));
         il.Append(il.Create(OpCodes.Leave, afterTry));
 
-        // catch (Exception) { pop; (assign empty-array default if retType is array); leave afterTry }
+        // Build the catch block and preserve the fallback return value.
         var catchPop = il.Create(OpCodes.Pop);
         il.Append(catchPop);
         EmitCatchDefaultValue(il, method, retLocal);
         il.Append(il.Create(OpCodes.Leave, afterTry));
 
-        // afterTry:  depth--;
-        il.Append(afterTry);                          // ldsfld depthField
+        // Decrease tracked recursion depth after the guarded call.
+        il.Append(afterTry);
         il.Append(il.Create(OpCodes.Ldc_I4_1));
         il.Append(il.Create(OpCodes.Sub));
         il.Append(il.Create(OpCodes.Stsfld, depthField));
 
-        // EXIT: ldloc retLocal; ret
+        // Append the final return.
         il.Append(ldlocFinal);
         il.Append(il.Create(OpCodes.Ret));
 

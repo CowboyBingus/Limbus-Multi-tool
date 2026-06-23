@@ -18,11 +18,11 @@ function Invoke-Checked([string]$Description, [scriptblock]$Command) {
     }
 }
 
-if (!$SkipInstallerBuild) {
+if (-not $SkipInstallerBuild) {
     Invoke-Checked 'Building installer' { & (Join-Path $installerDir 'build_exe.ps1') -Version $Version }
 }
 
-if (!(Test-Path -LiteralPath $distDir)) {
+if (-not (Test-Path -LiteralPath $distDir)) {
     throw "Installer dist folder not found: $distDir"
 }
 

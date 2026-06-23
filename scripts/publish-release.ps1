@@ -10,11 +10,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-if (!(Get-Command gh -ErrorAction SilentlyContinue)) {
+if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     throw "GitHub CLI not found. Install gh from https://cli.github.com/ and run 'gh auth login'."
 }
 
-if (!(Test-Path -LiteralPath $ArtifactPath)) {
+if (-not (Test-Path -LiteralPath $ArtifactPath)) {
     throw "Release artifact not found: $ArtifactPath"
 }
 

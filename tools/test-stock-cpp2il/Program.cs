@@ -32,7 +32,7 @@ public static class Program
             if (File.Exists(p))
             {
                 Console.WriteLine($"  resolved: {name}");
-                return Assembly.LoadFrom(p);
+                return LoadAssemblyFromPath(p);
             }
             return null;
         };
@@ -53,7 +53,7 @@ public static class Program
         Console.WriteLine();
 
         // Load LibCpp2IL via reflection so we can call it with the stock binary
-        var libCpp = Assembly.LoadFrom(Path.Combine(coreDir, "LibCpp2IL.dll"));
+        var libCpp = LoadAssemblyFromPath(Path.Combine(coreDir, "LibCpp2IL.dll"));
         var libMain = libCpp.GetType("LibCpp2IL.LibCpp2IlMain");
         var unityVerType = libCpp.GetType("LibCpp2IL.Versions.UnityVersion");
         var loadFromFile = libMain.GetMethod("LoadFromFile",
@@ -100,10 +100,18 @@ public static class Program
     static void ShowMagic(string label, string path)
     {
         if (!File.Exists(path)) { Console.WriteLine($"  {label}: MISSING"); return; }
-        var fs = File.OpenRead(path);
+        using var fs = File.OpenRead(path);
         var b = new byte[16];
-        fs.Read(b, 0, 16);
-        fs.Close();
-        Console.WriteLine($"  {label,-32}  size={new FileInfo(path).Length}  magic={BitConverter.ToString(b, 0, 8).Replace('-',' ')}");
+        var read = fs.Read(b, 0, b.Length);
+        var magicLength = Math.Min(read, 8);
+        var magic = magicLength == 0
+            ? "(empty)"
+            : BitConverter.ToString(b, 0, magicLength).Replace('-', ' ');
+        Console.WriteLine($"  {label,-32}  size={new FileInfo(path).Length}  magic={magic}");
+    }
+
+    static Assembly LoadAssemblyFromPath(string path)
+    {
+        return Assembly.Load(File.ReadAllBytes(path));
     }
 }

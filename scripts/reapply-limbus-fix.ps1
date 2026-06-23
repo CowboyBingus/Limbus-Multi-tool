@@ -27,63 +27,92 @@ function Resolve-FirstExistingPath([string[]]$Paths, [string]$Description) {
     throw "$Description not found. Checked: $($Paths -join ', ')"
 }
 
+function Get-ConfigLines([string]$ConfigPath) {
+    if (Test-Path -LiteralPath $ConfigPath) {
+        return @(Get-Content -LiteralPath $ConfigPath)
+    }
+
+    Info "BepInEx config not found; creating $ConfigPath"
+    return @()
+}
+
+function Update-ConfigValueLine([string[]]$Lines, [string]$Name, [string]$Value) {
+    $pattern = "^\s*$([regex]::Escape($Name))\s*=.*$"
+    $updated = $false
+    $result = New-Object System.Collections.Generic.List[string]
+
+    foreach ($line in $Lines) {
+        if ($line -match $pattern) {
+            $result.Add("$Name = $Value")
+            $updated = $true
+        } else {
+            $result.Add($line)
+        }
+    }
+
+    return [pscustomobject]@{
+        Lines = @($result.ToArray())
+        Updated = $updated
+    }
+}
+
+function Find-ConfigSectionIndex([string[]]$Lines, [string]$Section) {
+    $sectionPattern = "^\s*\[$([regex]::Escape($Section))\]\s*$"
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i] -match $sectionPattern) {
+            return $i
+        }
+    }
+
+    return -1
+}
+
+function Add-ConfigSectionValue([string[]]$Lines, [string]$Section, [string]$Name, [string]$Value) {
+    $result = @($Lines)
+    if ($result.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($result[-1])) {
+        $result += ""
+    }
+
+    $result += "[$Section]"
+    $result += "$Name = $Value"
+    return $result
+}
+
+function Insert-ConfigValueInSection([string[]]$Lines, [int]$SectionIndex, [string]$Name, [string]$Value) {
+    $anySectionPattern = "^\s*\[[^\]]+\]\s*$"
+    $insertIndex = $Lines.Count
+    for ($i = $SectionIndex + 1; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i] -match $anySectionPattern) {
+            $insertIndex = $i
+            break
+        }
+    }
+
+    $before = if ($insertIndex -gt 0) { @($Lines[0..($insertIndex - 1)]) } else { @() }
+    $after = if ($insertIndex -lt $Lines.Count) { @($Lines[$insertIndex..($Lines.Count - 1)]) } else { @() }
+    return @($before + "$Name = $Value" + $after)
+}
+
+function Add-ConfigValueLine([string[]]$Lines, [string]$Section, [string]$Name, [string]$Value) {
+    $sectionIndex = Find-ConfigSectionIndex $Lines $Section
+    if ($sectionIndex -lt 0) {
+        return Add-ConfigSectionValue $Lines $Section $Name $Value
+    }
+
+    return Insert-ConfigValueInSection $Lines $sectionIndex $Name $Value
+}
+
 function Set-ConfigValue([string]$ConfigPath, [string]$Section, [string]$Name, [string]$Value) {
     $configDir = Split-Path -Parent $ConfigPath
     if (-not (Test-Path -LiteralPath $configDir)) {
         New-Item -ItemType Directory -Path $configDir -Force | Out-Null
     }
 
-    if (Test-Path -LiteralPath $ConfigPath) {
-        $lines = @(Get-Content -LiteralPath $ConfigPath)
+    $update = Update-ConfigValueLine (Get-ConfigLines $ConfigPath) $Name $Value
+    $lines = if ($update.Updated) {
+        @($update.Lines)
     } else {
-        Info "BepInEx config not found; creating $ConfigPath"
-        $lines = @()
-    }
-
-    $pattern = "^\s*$([regex]::Escape($Name))\s*=.*$"
-    $sectionPattern = "^\s*\[$([regex]::Escape($Section))\]\s*$"
-    $anySectionPattern = "^\s*\[[^\]]+\]\s*$"
-    $updated = $false
-    for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match $pattern) {
-            $updated = $true
-            $lines[$i] = "$Name = $Value"
-        }
-    }
-
-    if (-not $updated) {
-        $sectionIndex = -1
-        for ($i = 0; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match $sectionPattern) {
-                $sectionIndex = $i
-                break
-            }
-        }
-
-        if ($sectionIndex -lt 0) {
-            if ($lines.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($lines[-1])) {
-                $lines += ""
-            }
-            $lines += "[$Section]"
-            $lines += "$Name = $Value"
-        } else {
-            $insertIndex = $lines.Count
-            for ($i = $sectionIndex + 1; $i -lt $lines.Count; $i++) {
-                if ($lines[$i] -match $anySectionPattern) {
-                    $insertIndex = $i
-                    break
-                }
-            }
-            $before = @()
-            $after = @()
-            if ($insertIndex -gt 0) {
-                $before = @($lines[0..($insertIndex - 1)])
-            }
-            if ($insertIndex -lt $lines.Count) {
-                $after = @($lines[$insertIndex..($lines.Count - 1)])
-            }
-            $lines = @($before + "$Name = $Value" + $after)
-        }
+        Add-ConfigValueLine @($update.Lines) $Section $Name $Value
     }
 
     Set-Content -LiteralPath $ConfigPath -Value $lines
@@ -258,6 +287,38 @@ function Patch-Il2CppRuntimeSymbols([string]$RuntimePath, [hashtable]$Map) {
     Info "Patched $patched Il2CppInterop.Runtime P/Invoke entrypoints"
 }
 
+function Test-RuntimeInvokeLookupMethod($Type, $Method) {
+    if (-not $Method.HasBody) {
+        return $false
+    }
+
+    if ($Type.FullName -ne "BepInEx.Unity.IL2CPP.IL2CPPChainloader" -or
+        $Method.Name -ne "Initialize") {
+        return $false
+    }
+
+    return [bool]($Method.Body.Instructions | Where-Object {
+        $_.OpCode.Code -eq [Mono.Cecil.Cil.Code]::Ldstr -and
+        [string]$_.Operand -eq "Runtime invoke pointer: 0x"
+    })
+}
+
+function Set-RuntimeInvokeStrings($Method, [string]$Target) {
+    $changed = 0
+    foreach ($instruction in $Method.Body.Instructions) {
+        if ($instruction.OpCode.Code -ne [Mono.Cecil.Cil.Code]::Ldstr) { continue }
+
+        $operand = [string]$instruction.Operand
+        if ($operand -eq "il2cpp_runtime_invoke" -or
+            $operand -match '^[A-Za-z_][A-Za-z0-9_]{10}$') {
+            $instruction.Operand = $Target
+            $changed++
+        }
+    }
+
+    return $changed
+}
+
 function Patch-BepInExUnityRuntimeInvoke([string]$Path, [hashtable]$Map) {
     Require-File $Path
     if (-not $Map.ContainsKey("il2cpp_runtime_invoke")) {
@@ -276,23 +337,8 @@ function Patch-BepInExUnityRuntimeInvoke([string]$Path, [hashtable]$Map) {
     $changed = 0
     foreach ($type in $ad.MainModule.Types) {
         foreach ($method in $type.Methods) {
-            if (-not $method.HasBody) { continue }
-            $isRuntimeInvokeLookup = $type.FullName -eq "BepInEx.Unity.IL2CPP.IL2CPPChainloader" -and
-                $method.Name -eq "Initialize" -and
-                ($method.Body.Instructions | Where-Object {
-                    $_.OpCode.Code -eq [Mono.Cecil.Cil.Code]::Ldstr -and
-                    [string]$_.Operand -eq "Runtime invoke pointer: 0x"
-                })
-            if (-not $isRuntimeInvokeLookup) { continue }
-
-            foreach ($instruction in $method.Body.Instructions) {
-                if ($instruction.OpCode.Code -ne [Mono.Cecil.Cil.Code]::Ldstr) { continue }
-                $operand = [string]$instruction.Operand
-                if ($operand -eq "il2cpp_runtime_invoke" -or
-                    $operand -match '^[A-Za-z_][A-Za-z0-9_]{10}$') {
-                    $instruction.Operand = $target
-                    $changed++
-                }
+            if (Test-RuntimeInvokeLookupMethod $type $method) {
+                $changed += Set-RuntimeInvokeStrings $method $target
             }
         }
     }
@@ -413,6 +459,162 @@ function Patch-Il2CppMscorlib([string]$Path) {
     $ad.Write($Path)
 }
 
+function Add-AssemblyReferenceIfMissing($Module, [string]$Name) {
+    if (-not ($Module.AssemblyReferences | Where-Object { $_.Name -eq $Name })) {
+        $Module.AssemblyReferences.Add((New-Object Mono.Cecil.AssemblyNameReference($Name, [Version]"0.0.0.0")))
+    }
+
+    return $Module.AssemblyReferences | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
+}
+
+function Set-CanvasScaleModeEnum($Module) {
+    $scaleMode = $Module.GetType("UnityEngine.UI.CanvasScaler/ScaleMode")
+    if ($null -eq $scaleMode) {
+        return
+    }
+
+    $mscorlib = $Module.AssemblyReferences | Where-Object { $_.Name -eq "mscorlib" } | Select-Object -First 1
+    $scaleMode.BaseType = New-Object Mono.Cecil.TypeReference("System", "Enum", $Module, $mscorlib)
+    $scaleMode.Attributes = $scaleMode.Attributes -bor [Mono.Cecil.TypeAttributes]::Sealed
+    if (-not ($scaleMode.Fields | Where-Object { $_.Name -eq "value__" })) {
+        $scaleMode.Fields.Insert(0, (New-Object Mono.Cecil.FieldDefinition(
+            "value__",
+            ([Mono.Cecil.FieldAttributes]::Public -bor [Mono.Cecil.FieldAttributes]::SpecialName -bor [Mono.Cecil.FieldAttributes]::RTSpecialName),
+            $Module.TypeSystem.Int32)))
+    }
+
+    foreach ($pair in @(@("ConstantPixelSize", 0), @("ScaleWithScreenSize", 1), @("ConstantPhysicalSize", 2))) {
+        Set-ScaleModeLiteralField $scaleMode ([string]$pair[0]) ([int]$pair[1])
+    }
+}
+
+function Set-ScaleModeLiteralField($ScaleMode, [string]$Name, [int]$Constant) {
+    $field = $ScaleMode.Fields | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
+    if ($null -eq $field) {
+        $field = New-Object Mono.Cecil.FieldDefinition(
+            $Name,
+            ([Mono.Cecil.FieldAttributes](
+                [int][Mono.Cecil.FieldAttributes]::Public -bor
+                [int][Mono.Cecil.FieldAttributes]::Static -bor
+                [int][Mono.Cecil.FieldAttributes]::Literal -bor
+                [int][Mono.Cecil.FieldAttributes]::HasDefault
+            )),
+            $ScaleMode)
+        $ScaleMode.Fields.Add($field)
+    }
+
+    $field.Constant = $Constant
+}
+
+function Ensure-CanvasOnEnableMethod($Module, $Canvas) {
+    $method = $Canvas.Methods |
+        Where-Object { $_.Name -eq "OnEnable" -and $_.Parameters.Count -eq 0 } |
+        Select-Object -First 1
+    if ($null -ne $method) {
+        return $method
+    }
+
+    $method = New-Object Mono.Cecil.MethodDefinition(
+        "OnEnable",
+        ([Mono.Cecil.MethodAttributes](
+            [int][Mono.Cecil.MethodAttributes]::Public -bor
+            [int][Mono.Cecil.MethodAttributes]::HideBySig
+        )),
+        $Module.TypeSystem.Void)
+    $body = New-Object Mono.Cecil.Cil.MethodBody($method)
+    $method.Body = $body
+    $il = $body.GetILProcessor()
+    $il.Append($il.Create([Mono.Cecil.Cil.OpCodes]::Ret))
+    $Canvas.Methods.Add($method)
+    return $method
+}
+
+function Ensure-NativeOnEnableField($Module, $Canvas) {
+    $field = $Canvas.Fields |
+        Where-Object { $_.Name -eq "NativeMethodInfoPtr_OnEnable" } |
+        Select-Object -First 1
+    if ($null -ne $field) {
+        return $field
+    }
+
+    $field = New-Object Mono.Cecil.FieldDefinition(
+        "NativeMethodInfoPtr_OnEnable",
+        ([Mono.Cecil.FieldAttributes]::Private -bor [Mono.Cecil.FieldAttributes]::Static -bor [Mono.Cecil.FieldAttributes]::InitOnly),
+        $Module.TypeSystem.IntPtr)
+    $Canvas.Fields.Add($field)
+    return $field
+}
+
+function Get-Il2CppGetMethodReference($Module) {
+    $runtimePath = Join-Path $GameDir "BepInEx\core\Il2CppInterop.Runtime.dll"
+    Require-File $runtimePath
+    $runtime = [Mono.Cecil.AssemblyDefinition]::ReadAssembly($runtimePath)
+    $il2cpp = $runtime.MainModule.GetType("Il2CppInterop.Runtime.IL2CPP")
+    $getMethod = $il2cpp.Methods |
+        Where-Object { $_.Name -eq "GetIl2CppMethod" -and $_.Parameters.Count -eq 5 } |
+        Select-Object -First 1
+    if ($null -eq $getMethod) {
+        throw "Il2CppInterop.Runtime.IL2CPP is missing GetIl2CppMethod"
+    }
+
+    return [Mono.Cecil.MethodReference]$Module.ImportReference($getMethod)
+}
+
+function Get-NativeClassFieldFromClassInitializer($ClassInitializer) {
+    $instruction = $ClassInitializer.Body.Instructions |
+        Where-Object { $_.OpCode.Code -eq [Mono.Cecil.Cil.Code]::Ldsfld } |
+        Select-Object -First 1
+    if ($null -eq $instruction) {
+        throw "UnityEngine.UI.CanvasScaler .cctor is missing its native class field load"
+    }
+
+    return [Mono.Cecil.FieldReference]$instruction.Operand
+}
+
+function Add-OnEnableLookupToClassInitializer($Module, $Canvas, $NativeMethodField, $GetMethodRef) {
+    $cctor = $Canvas.Methods | Where-Object { $_.Name -eq ".cctor" } | Select-Object -First 1
+    if ($null -eq $cctor) {
+        throw "UnityEngine.UI.CanvasScaler is missing .cctor"
+    }
+
+    if ($cctor.Body.Instructions | Where-Object { $_.Operand -eq $NativeMethodField }) {
+        return
+    }
+
+    $nativeClassField = Get-NativeClassFieldFromClassInitializer $cctor
+    $ret = $cctor.Body.Instructions |
+        Where-Object { $_.OpCode.Code -eq [Mono.Cecil.Cil.Code]::Ret } |
+        Select-Object -Last 1
+    if ($null -eq $ret) {
+        throw "UnityEngine.UI.CanvasScaler .cctor is missing a return instruction"
+    }
+
+    $il = $cctor.Body.GetILProcessor()
+    $instructions = @(
+        $il.Create([Mono.Cecil.Cil.OpCodes]::Ldsfld, $nativeClassField),
+        $il.Create([Mono.Cecil.Cil.OpCodes]::Ldc_I4_0),
+        $il.Create([Mono.Cecil.Cil.OpCodes]::Ldstr, "OnEnable"),
+        $il.Create([Mono.Cecil.Cil.OpCodes]::Ldstr, "System.Void"),
+        $il.Create([Mono.Cecil.Cil.OpCodes]::Ldc_I4_0),
+        $il.Create([Mono.Cecil.Cil.OpCodes]::Newarr, $Module.TypeSystem.String),
+        $il.Create([Mono.Cecil.Cil.OpCodes]::Call, $GetMethodRef),
+        $il.Create([Mono.Cecil.Cil.OpCodes]::Stsfld, [Mono.Cecil.FieldReference]$NativeMethodField)
+    )
+    foreach ($instruction in $instructions) {
+        $il.InsertBefore($ret, $instruction)
+    }
+}
+
+function Set-CanvasOnEnableBody($Module, $Canvas, $NativeMethodField) {
+    $onEnable = Ensure-CanvasOnEnableMethod $Module $Canvas
+    $body = New-Object Mono.Cecil.Cil.MethodBody($onEnable)
+    $onEnable.Body = $body
+    $il = $body.GetILProcessor()
+    $il.Append($il.Create([Mono.Cecil.Cil.OpCodes]::Ldsfld, [Mono.Cecil.FieldReference]$NativeMethodField))
+    $il.Append($il.Create([Mono.Cecil.Cil.OpCodes]::Pop))
+    $il.Append($il.Create([Mono.Cecil.Cil.OpCodes]::Ret))
+}
+
 function Patch-UnityEngineUI([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) {
         Info "UnityEngine.UI.dll is missing; launch once to generate interop, then rerun this script."
@@ -432,112 +634,12 @@ function Patch-UnityEngineUI([string]$Path) {
         throw "UnityEngine.UI.dll is missing UnityEngine.UI.CanvasScaler"
     }
 
-    if (-not ($module.AssemblyReferences | Where-Object { $_.Name -eq "UnityEngine.CoreModule" })) {
-        $module.AssemblyReferences.Add((New-Object Mono.Cecil.AssemblyNameReference("UnityEngine.CoreModule", [Version]"0.0.0.0")))
-    }
-    $coreRef = $module.AssemblyReferences | Where-Object { $_.Name -eq "UnityEngine.CoreModule" } | Select-Object -First 1
-    $vec2 = New-Object Mono.Cecil.TypeReference("UnityEngine", "Vector2", $module, $coreRef)
-
-    $scaleMode = $module.GetType("UnityEngine.UI.CanvasScaler/ScaleMode")
-    if ($null -ne $scaleMode) {
-        $mscorlib = $module.AssemblyReferences | Where-Object { $_.Name -eq "mscorlib" } | Select-Object -First 1
-        $scaleMode.BaseType = New-Object Mono.Cecil.TypeReference("System", "Enum", $module, $mscorlib)
-        $scaleMode.Attributes = $scaleMode.Attributes -bor [Mono.Cecil.TypeAttributes]::Sealed
-        if (-not ($scaleMode.Fields | Where-Object { $_.Name -eq "value__" })) {
-            $scaleMode.Fields.Insert(0, (New-Object Mono.Cecil.FieldDefinition(
-                "value__",
-                ([Mono.Cecil.FieldAttributes]::Public -bor [Mono.Cecil.FieldAttributes]::SpecialName -bor [Mono.Cecil.FieldAttributes]::RTSpecialName),
-                $module.TypeSystem.Int32)))
-        }
-        foreach ($pair in @(@("ConstantPixelSize", 0), @("ScaleWithScreenSize", 1), @("ConstantPhysicalSize", 2))) {
-            $name = [string]$pair[0]
-            $constant = [int]$pair[1]
-            $field = $scaleMode.Fields | Where-Object { $_.Name -eq $name } | Select-Object -First 1
-            if ($null -eq $field) {
-                $field = New-Object Mono.Cecil.FieldDefinition(
-                    $name,
-                    ([Mono.Cecil.FieldAttributes](
-                        [int][Mono.Cecil.FieldAttributes]::Public -bor
-                        [int][Mono.Cecil.FieldAttributes]::Static -bor
-                        [int][Mono.Cecil.FieldAttributes]::Literal -bor
-                        [int][Mono.Cecil.FieldAttributes]::HasDefault
-                    )),
-                    $scaleMode)
-                $scaleMode.Fields.Add($field)
-            }
-            $field.Constant = $constant
-        }
-    }
-
-    if (-not ($canvas.Methods | Where-Object { $_.Name -eq "OnEnable" -and $_.Parameters.Count -eq 0 })) {
-        $method = New-Object Mono.Cecil.MethodDefinition(
-            "OnEnable",
-            ([Mono.Cecil.MethodAttributes](
-                [int][Mono.Cecil.MethodAttributes]::Public -bor
-                [int][Mono.Cecil.MethodAttributes]::HideBySig
-            )),
-            $module.TypeSystem.Void)
-        $body = New-Object Mono.Cecil.Cil.MethodBody($method)
-        $method.Body = $body
-        $il = $body.GetILProcessor()
-        $il.Append($il.Create([Mono.Cecil.Cil.OpCodes]::Ret))
-        $canvas.Methods.Add($method)
-    }
-
-    $nativeMethodField = $canvas.Fields | Where-Object { $_.Name -eq "NativeMethodInfoPtr_OnEnable" } | Select-Object -First 1
-    if ($null -eq $nativeMethodField) {
-        $nativeMethodField = New-Object Mono.Cecil.FieldDefinition(
-            "NativeMethodInfoPtr_OnEnable",
-            ([Mono.Cecil.FieldAttributes]::Private -bor [Mono.Cecil.FieldAttributes]::Static -bor [Mono.Cecil.FieldAttributes]::InitOnly),
-            $module.TypeSystem.IntPtr)
-        $canvas.Fields.Add($nativeMethodField)
-    }
-
-    $runtimePath = Join-Path $GameDir "BepInEx\core\Il2CppInterop.Runtime.dll"
-    Require-File $runtimePath
-    $runtime = [Mono.Cecil.AssemblyDefinition]::ReadAssembly($runtimePath)
-    $il2cpp = $runtime.MainModule.GetType("Il2CppInterop.Runtime.IL2CPP")
-    $getMethod = $il2cpp.Methods |
-        Where-Object { $_.Name -eq "GetIl2CppMethod" -and $_.Parameters.Count -eq 5 } |
-        Select-Object -First 1
-    $getMethodRef = [Mono.Cecil.MethodReference]$module.ImportReference($getMethod)
-
-    $cctor = $canvas.Methods | Where-Object { $_.Name -eq ".cctor" } | Select-Object -First 1
-    if ($null -eq $cctor) {
-        throw "UnityEngine.UI.CanvasScaler is missing .cctor"
-    }
-    $nativeClassField = [Mono.Cecil.FieldReference](($cctor.Body.Instructions |
-        Where-Object { $_.OpCode.Code -eq [Mono.Cecil.Cil.Code]::Ldsfld } |
-        Select-Object -First 1).Operand)
-    $ret = $cctor.Body.Instructions |
-        Where-Object { $_.OpCode.Code -eq [Mono.Cecil.Cil.Code]::Ret } |
-        Select-Object -Last 1
-    $il = $cctor.Body.GetILProcessor()
-    if (-not ($cctor.Body.Instructions | Where-Object { $_.Operand -eq $nativeMethodField })) {
-        $instructions = @(
-            $il.Create([Mono.Cecil.Cil.OpCodes]::Ldsfld, $nativeClassField),
-            $il.Create([Mono.Cecil.Cil.OpCodes]::Ldc_I4_0),
-            $il.Create([Mono.Cecil.Cil.OpCodes]::Ldstr, "OnEnable"),
-            $il.Create([Mono.Cecil.Cil.OpCodes]::Ldstr, "System.Void"),
-            $il.Create([Mono.Cecil.Cil.OpCodes]::Ldc_I4_0),
-            $il.Create([Mono.Cecil.Cil.OpCodes]::Newarr, $module.TypeSystem.String),
-            $il.Create([Mono.Cecil.Cil.OpCodes]::Call, $getMethodRef),
-            $il.Create([Mono.Cecil.Cil.OpCodes]::Stsfld, [Mono.Cecil.FieldReference]$nativeMethodField)
-        )
-        foreach ($instruction in $instructions) {
-            $il.InsertBefore($ret, $instruction)
-        }
-    }
-
-    $onEnable = $canvas.Methods |
-        Where-Object { $_.Name -eq "OnEnable" -and $_.Parameters.Count -eq 0 } |
-        Select-Object -First 1
-    $body = New-Object Mono.Cecil.Cil.MethodBody($onEnable)
-    $onEnable.Body = $body
-    $il = $body.GetILProcessor()
-    $il.Append($il.Create([Mono.Cecil.Cil.OpCodes]::Ldsfld, [Mono.Cecil.FieldReference]$nativeMethodField))
-    $il.Append($il.Create([Mono.Cecil.Cil.OpCodes]::Pop))
-    $il.Append($il.Create([Mono.Cecil.Cil.OpCodes]::Ret))
+    Add-AssemblyReferenceIfMissing $module "UnityEngine.CoreModule" | Out-Null
+    Set-CanvasScaleModeEnum $module
+    $nativeMethodField = Ensure-NativeOnEnableField $module $canvas
+    $getMethodRef = Get-Il2CppGetMethodReference $module
+    Add-OnEnableLookupToClassInitializer $module $canvas $nativeMethodField $getMethodRef
+    Set-CanvasOnEnableBody $module $canvas $nativeMethodField
 
     $ad.Write($Path)
 }

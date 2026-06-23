@@ -6,7 +6,6 @@ using Il2CppInterop.Runtime;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Linq;
 
@@ -19,11 +18,12 @@ namespace LimbusCanvasFix
         public const string NAME    = "LimbusCanvasFix";
         public const string VERSION = "1.2.1";
 
-        internal static new ManualLogSource Log = null!;
+        private static ManualLogSource? log;
+        internal static new ManualLogSource Log => log ?? throw new InvalidOperationException($"{NAME} logging is not initialized.");
 
         public override void Load()
         {
-            Log = base.Log;
+            InitializeLog(base.Log);
             Log.LogInfo($"{NAME} {VERSION} loading...");
 
             ApplyPatches();
@@ -38,6 +38,11 @@ namespace LimbusCanvasFix
             RectTransformLayoutDetour.Uninstall();
             LayoutRuleMaintainer.Reset();
             return true;
+        }
+
+        private static void InitializeLog(ManualLogSource source)
+        {
+            log = source;
         }
 
         private static void ApplyPatches()
@@ -68,16 +73,16 @@ namespace LimbusCanvasFix
         {
             try
             {
-                var field = typeof(IL2CPP).GetField("ourImagesMap", BindingFlags.Static | BindingFlags.NonPublic);
+                var field = AccessTools.Field(typeof(IL2CPP), "ourImagesMap");
                 if (field?.GetValue(null) is not Dictionary<string, IntPtr> images)
                     return;
 
                 Log.LogInfo($"IL2CPP image count: {images.Count}");
-                foreach (var key in images.Keys.Select(x => 
-                    x.Contains("UI", StringComparison.OrdinalIgnoreCase) || 
+                foreach (var key in images.Keys.Where(x =>
+                    x.Contains("UI", StringComparison.OrdinalIgnoreCase) ||
                     x.Contains(UnityInteropNames.Namespace, StringComparison.OrdinalIgnoreCase)))
                 {
-                        Log.LogInfo($"IL2CPP image: {key}");
+                    Log.LogInfo($"IL2CPP image: {key}");
                 }
             }
             catch (Exception ex)

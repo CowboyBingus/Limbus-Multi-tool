@@ -6,14 +6,14 @@ namespace LimbusFramePacingFix.GameWrappers
 {
     public sealed class GlobalGameManager : Il2CppObjectBase
     {
-        private static readonly IntPtr NativeMethodInfoPtr_SetFrameRateOnSceneLoaded;
+        private static readonly IntPtr NativeMethodInfoPtr_SetFrameRateOnSceneLoaded = InitializeSetFrameRateOnSceneLoaded();
 
-        static GlobalGameManager()
+        private static IntPtr InitializeSetFrameRateOnSceneLoaded()
         {
             Il2CppClassPointerStore<GlobalGameManager>.NativeClassPtr =
                 IL2CPP.GetIl2CppClass("Assembly-CSharp.dll", "", "GlobalGameManager");
             IL2CPP.il2cpp_runtime_class_init(Il2CppClassPointerStore<GlobalGameManager>.NativeClassPtr);
-            NativeMethodInfoPtr_SetFrameRateOnSceneLoaded = IL2CPP.GetIl2CppMethod(
+            return IL2CPP.GetIl2CppMethod(
                 Il2CppClassPointerStore<GlobalGameManager>.NativeClassPtr,
                 false,
                 "SetFrameRateOnSceneLoaded",
@@ -26,8 +26,9 @@ namespace LimbusFramePacingFix.GameWrappers
         {
         }
 
-        public void SetFrameRateOnSceneLoaded(IntPtr sceneName)
+        public static void SetFrameRateOnSceneLoaded(IntPtr sceneName)
         {
+            _ = sceneName;
             _ = NativeMethodInfoPtr_SetFrameRateOnSceneLoaded;
         }
     }
@@ -37,14 +38,14 @@ namespace LimbusFramePacingFix.GameWrappers.LocalSave
 {
     public sealed class LocalGameOptionData : Il2CppObjectBase
     {
-        private static readonly IntPtr NativeMethodInfoPtr_ApplyFrameRate;
+        private static readonly IntPtr NativeMethodInfoPtr_ApplyFrameRate = InitializeApplyFrameRate();
 
-        static LocalGameOptionData()
+        private static IntPtr InitializeApplyFrameRate()
         {
             Il2CppClassPointerStore<LocalGameOptionData>.NativeClassPtr =
                 IL2CPP.GetIl2CppClass("Assembly-CSharp.dll", "LocalSave", "LocalGameOptionData");
             IL2CPP.il2cpp_runtime_class_init(Il2CppClassPointerStore<LocalGameOptionData>.NativeClassPtr);
-            NativeMethodInfoPtr_ApplyFrameRate = IL2CPP.GetIl2CppMethod(
+            return IL2CPP.GetIl2CppMethod(
                 Il2CppClassPointerStore<LocalGameOptionData>.NativeClassPtr,
                 false,
                 "ApplyFrameRate",
@@ -57,8 +58,9 @@ namespace LimbusFramePacingFix.GameWrappers.LocalSave
         {
         }
 
-        public void ApplyFrameRate(bool isBattle)
+        public static void ApplyFrameRate(bool isBattle)
         {
+            _ = isBattle;
             _ = NativeMethodInfoPtr_ApplyFrameRate;
         }
     }

@@ -69,7 +69,7 @@ public sealed class Plugin : BasePlugin
 
     internal static void Debug(string message)
     {
-        if (debugLogging != null && debugLogging.Value)
+        if (debugLogging?.Value == true)
             Log.LogInfo($"[debug] {message}");
     }
 
@@ -152,14 +152,10 @@ internal static class InspectorServer
                 var client = listener!.AcceptTcpClient();
                 _ = ThreadPool.QueueUserWorkItem(_ => HandleClient(client));
             }
-            catch (SocketException)
-                when (running)
+            catch (SocketException ex)
             {
-                Plugin.Log.LogWarning("Inspector server socket stopped unexpectedly.");
-            }
-            catch (SocketException)
-            {
-                return;
+                if (!HandleAcceptSocketException(ex))
+                    return;
             }
             catch (ObjectDisposedException)
             {
@@ -170,6 +166,15 @@ internal static class InspectorServer
                 Plugin.Log.LogWarning($"Inspector server accept failed: {ex.Message}");
             }
         }
+    }
+
+    private static bool HandleAcceptSocketException(SocketException ex)
+    {
+        if (!running)
+            return false;
+
+        Plugin.Log.LogWarning($"Inspector server socket stopped unexpectedly: {ex.SocketErrorCode}.");
+        return true;
     }
 
     private static void HandleClient(TcpClient client)
@@ -1037,6 +1042,17 @@ internal sealed class HttpRequest
     public static HttpRequest? Read(Stream stream)
     {
         using var reader = new StreamReader(stream, Encoding.UTF8, false, 8192, leaveOpen: true);
+        var request = ReadRequestLine(reader);
+        if (request == null)
+            return null;
+
+        var contentLength = ReadContentLength(reader);
+        request.Body = ReadBody(reader, contentLength);
+        return request;
+    }
+
+    private static HttpRequest? ReadRequestLine(StreamReader reader)
+    {
         var requestLine = reader.ReadLine();
         if (string.IsNullOrWhiteSpace(requestLine))
             return null;
@@ -1050,12 +1066,20 @@ internal sealed class HttpRequest
             Method = parts[0].ToUpperInvariant()
         };
 
-        var target = parts[1];
+        ParseTarget(parts[1], request);
+        return request;
+    }
+
+    private static void ParseTarget(string target, HttpRequest request)
+    {
         var queryIndex = target.IndexOf('?');
         request.Path = Uri.UnescapeDataString(queryIndex >= 0 ? target[..queryIndex] : target);
         if (queryIndex >= 0)
             ParseQuery(target[(queryIndex + 1)..], request.Query);
+    }
 
+    private static int ReadContentLength(StreamReader reader)
+    {
         var contentLength = 0;
         while (true)
         {
@@ -1072,21 +1096,25 @@ internal sealed class HttpRequest
                 _ = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out contentLength);
         }
 
-        if (contentLength > 0)
+        return contentLength;
+    }
+
+    private static string ReadBody(StreamReader reader, int contentLength)
+    {
+        if (contentLength <= 0)
+            return "";
+
+        var buffer = new char[Math.Min(contentLength, 1024 * 1024)];
+        var offset = 0;
+        while (offset < buffer.Length)
         {
-            var buffer = new char[Math.Min(contentLength, 1024 * 1024)];
-            var offset = 0;
-            while (offset < buffer.Length)
-            {
-                var read = reader.Read(buffer, offset, buffer.Length - offset);
-                if (read <= 0)
-                    break;
-                offset += read;
-            }
-            request.Body = new string(buffer, 0, offset);
+            var read = reader.Read(buffer, offset, buffer.Length - offset);
+            if (read <= 0)
+                break;
+            offset += read;
         }
 
-        return request;
+        return new string(buffer, 0, offset);
     }
 
     private static void ParseQuery(string raw, Dictionary<string, string> query)

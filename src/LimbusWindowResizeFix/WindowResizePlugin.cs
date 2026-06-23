@@ -24,13 +24,35 @@ namespace LimbusWindowResizeFix
 
         public override void Load()
         {
-            logger = Log;
-            logger.LogInfo($"{NAME} {VERSION} loading...");
+            InitializeLogger(base.Log);
+            logger!.LogInfo($"{NAME} {VERSION} loading...");
 
+            StartTimer();
+
+            logger!.LogInfo($"{NAME} ready.");
+        }
+
+        public override bool Unload()
+        {
+            StopTimer();
+            return true;
+        }
+
+        private static void InitializeLogger(ManualLogSource source)
+        {
+            logger = source;
+        }
+
+        private static void StartTimer()
+        {
             ApplyResizeStyles();
             timer = new Timer(_ => ApplyResizeStyles(), null, 250, 1000);
+        }
 
-            logger.LogInfo($"{NAME} ready.");
+        private static void StopTimer()
+        {
+            timer?.Dispose();
+            timer = null;
         }
 
         private static void ApplyResizeStyles()

@@ -256,16 +256,9 @@ class UpdateCheckWorker(QThread):
             if not tag:
                 raise RuntimeError("Latest release did not include a tag name.")
 
-            assets = release.get("assets") or []
-            selected_asset: dict[str, object] | None = None
+            selected_asset = self.select_release_asset(release.get("assets") or [])
             if selected_asset is None:
                 raise RuntimeError("Latest release does not have a downloadable zip asset.")
-            
-            for asset in assets:
-                name = str(asset.get("name") or "")
-                if UPDATE_ASSET_PATTERN.match(name) or name.lower().endswith(".zip"):
-                    selected_asset=asset
-                    break
 
             asset_url = str(selected_asset.get("browser_download_url") or "")
             asset_name = str(selected_asset.get("name") or "release asset")
@@ -289,6 +282,24 @@ class UpdateCheckWorker(QThread):
             )
         except Exception as exc:
             self.finished_result.emit({"ok": False, "error": str(exc), "current": current_version()})
+
+    @staticmethod
+    def select_release_asset(assets: object) -> dict[str, object] | None:
+        if not isinstance(assets, list):
+            return None
+
+        zip_asset: dict[str, object] | None = None
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+
+            name = str(asset.get("name") or "")
+            if UPDATE_ASSET_PATTERN.match(name):
+                return asset
+            if zip_asset is None and name.lower().endswith(".zip"):
+                zip_asset = asset
+
+        return zip_asset
 
 
 class StatusCard(QFrame):

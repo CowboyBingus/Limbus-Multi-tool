@@ -14,7 +14,7 @@ function Invoke-Checked([string]$Description, [scriptblock]$Command) {
     }
 }
 
-if (!(Test-Path -LiteralPath $venv)) {
+if (-not (Test-Path -LiteralPath $venv)) {
     Invoke-Checked 'Creating Python virtual environment' { py -3.10 -m venv $venv }
 }
 

@@ -115,7 +115,7 @@ for ($i=0; $i -lt $nameCount; $i++) {
 "GameAssembly.dll export count: $($gaExports.Count)"
 
 # Find every \0XYZ\0 11-char obfuscated-pattern run, dedup, intersect with GA exports.
-$matches = [regex]::Matches($uascii, '(?<=\x00)[A-Za-z_][A-Za-z0-9_]{10}\x00')
+$obfuscatedMatches = [regex]::Matches($uascii, '(?<=\x00)[A-Za-z_][A-Za-z0-9_]{10}\x00')
 $seen = New-Object System.Collections.Generic.HashSet[string]
 $rvaToName = @{}
 
@@ -136,7 +136,7 @@ $upSections = for ($i=0; $i -lt $upNumSec; $i++) {
   }
 }
 
-foreach ($m in $matches) {
+foreach ($m in $obfuscatedMatches) {
   $name = $m.Value.TrimEnd("`0")
   if ($gaExports.Contains($name) -and $seen.Add($name)) {
     $rva = O2R $m.Index $upSections

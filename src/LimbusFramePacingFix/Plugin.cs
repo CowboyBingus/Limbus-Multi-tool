@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -19,6 +20,9 @@ public sealed class Plugin : BasePlugin
     public const string GUID = "com.you.limbusframepacingfix";
     public const string NAME = "LimbusFramePacingFix";
     public const string VERSION = "0.4.1";
+    internal const string UnityCoreModule = "UnityEngine.CoreModule.dll";
+    private const string FramePacingSection = "Frame pacing";
+    private const string DiagnosticsSection = "Diagnostics";
 
     private static ManualLogSource? log;
     private static ConfigEntry<bool>? enabled;
@@ -84,28 +88,26 @@ public sealed class Plugin : BasePlugin
     private static void BindConfig(ConfigFile config)
     {
         enabled = config.Bind("General", "Enabled", true, "Master switch for all frame pacing mitigations.");
-        targetFrameRate = config.Bind("Frame pacing", "TargetFrameRate", 240, "Forced Application.targetFrameRate. Use -1 to let Unity use platform default.");
-        vSyncCount = config.Bind("Frame pacing", "VSyncCount", 0, "Forced QualitySettings.vSyncCount. 0 disables Unity VSync so the explicit FPS cap is used.");
-        forceOnDemandEveryFrame = config.Bind("Frame pacing", "ForceOnDemandEveryFrame", true, "Forces OnDemandRendering.renderFrameInterval to 1 so Unity does not intentionally skip renders.");
-        maxQueuedFrames = config.Bind("Frame pacing", "MaxQueuedFrames", 1, "Forced QualitySettings.maxQueuedFrames. Use 0 to leave unchanged.");
+        targetFrameRate = config.Bind(FramePacingSection, "TargetFrameRate", 240, "Forced Application.targetFrameRate. Use -1 to let Unity use platform default.");
+        vSyncCount = config.Bind(FramePacingSection, "VSyncCount", 0, "Forced QualitySettings.vSyncCount. 0 disables Unity VSync so the explicit FPS cap is used.");
+        forceOnDemandEveryFrame = config.Bind(FramePacingSection, "ForceOnDemandEveryFrame", true, "Forces OnDemandRendering.renderFrameInterval to 1 so Unity does not intentionally skip renders.");
+        maxQueuedFrames = config.Bind(FramePacingSection, "MaxQueuedFrames", 1, "Forced QualitySettings.maxQueuedFrames. Use 0 to leave unchanged.");
         allowDisplayModeChanges = config.Bind("Display", "AllowDisplayModeChanges", false, "Opt-in guard for settings that change Unity's display mode or window size. Leave false to preserve the user's selected window mode.");
         forceMaximizedWindow = config.Bind("Display", "ForceMaximizedWindow", false, "When AllowDisplayModeChanges is true, forces Screen.fullScreenMode to FullScreenWindow, Unity's borderless maximized window mode.");
         runInBackground = config.Bind("Display", "RunInBackground", false, "Forced Application.runInBackground value.");
-        reapplyIntervalSeconds = config.Bind("Diagnostics", "ReapplyIntervalSeconds", 0.25f, "How often the runtime enforcer checks and reapplies settings.");
-        applyNativeUnitySettings = config.Bind("Diagnostics", "ApplyNativeUnitySettings", true, "Experimental. Applies Unity settings through IL2CPP runtime invocation.");
-        patchGameFrameRateMethods = config.Bind("Diagnostics", "PatchGameFrameRateMethods", true, "Hooks Limbus' own frame-rate apply methods so game-side 144 FPS writes are followed by the forced cap.");
-        dumpMetadataOnLoad = config.Bind("Diagnostics", "DumpMetadataOnLoad", false, "Writes an IL2CPP frame/display metadata scan for reverse engineering. Leave off for normal play.");
+        reapplyIntervalSeconds = config.Bind(DiagnosticsSection, "ReapplyIntervalSeconds", 0.25f, "How often the runtime enforcer checks and reapplies settings.");
+        applyNativeUnitySettings = config.Bind(DiagnosticsSection, "ApplyNativeUnitySettings", true, "Experimental. Applies Unity settings through IL2CPP runtime invocation.");
+        patchGameFrameRateMethods = config.Bind(DiagnosticsSection, "PatchGameFrameRateMethods", true, "Hooks Limbus' own frame-rate apply methods so game-side 144 FPS writes are followed by the forced cap.");
+        dumpMetadataOnLoad = config.Bind(DiagnosticsSection, "DumpMetadataOnLoad", false, "Writes an IL2CPP frame/display metadata scan for reverse engineering. Leave off for normal play.");
     }
 
-    internal static bool IsEnabled => enabled != null && enabled.Value;
-    internal static bool ShouldApplyNativeUnitySettings => IsEnabled && applyNativeUnitySettings != null && applyNativeUnitySettings.Value;
-    internal static bool ShouldPatchGameFrameRateMethods => IsEnabled && patchGameFrameRateMethods != null && patchGameFrameRateMethods.Value;
+    internal static bool IsEnabled => enabled?.Value == true;
+    internal static bool ShouldApplyNativeUnitySettings => IsEnabled && applyNativeUnitySettings?.Value == true;
+    internal static bool ShouldPatchGameFrameRateMethods => IsEnabled && patchGameFrameRateMethods?.Value == true;
     internal static bool ShouldForceMaximizedWindow =>
         IsEnabled &&
-        allowDisplayModeChanges != null &&
-        allowDisplayModeChanges.Value &&
-        forceMaximizedWindow != null &&
-        forceMaximizedWindow.Value;
+        allowDisplayModeChanges?.Value == true &&
+        forceMaximizedWindow?.Value == true;
 
     private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name)
     {
@@ -215,8 +217,7 @@ internal static class FramePacingEnforcer
 
     private static void LogApply(string reason, bool forceLog, List<string> changes)
     {
-        var nextLogCount = FramePacingState.ApplyLogCount + 1;
-        FramePacingState.ApplyLogCount = nextLogCount;
+        var nextLogCount = FramePacingState.IncrementApplyLogCount();
         if (!forceLog && nextLogCount > 8 && nextLogCount % 120 != 0)
             return;
 
@@ -228,8 +229,14 @@ internal static class FramePacingEnforcer
 
 internal static class FramePacingState
 {
-    public static int ApplyLogCount;
-    public static int DetourLogCount;
+    private static int applyLogCount;
+    private static int detourLogCount;
+
+    public static int ApplyLogCount => applyLogCount;
+    public static int DetourLogCount => detourLogCount;
+
+    public static int IncrementApplyLogCount() => ++applyLogCount;
+    public static int IncrementDetourLogCount() => ++detourLogCount;
 }
 
 internal static class CanvasScalerFramePacingDetour
@@ -306,7 +313,6 @@ internal static class NativeUnitySettings
     private delegate void SetIntNativeDelegate(int value, IntPtr methodInfo);
 
     private static bool initialized;
-    private static string initStatus = "";
     private static IntPtr setTargetFrameRate;
     private static IntPtr setVSyncCount;
     private static IntPtr setMaxQueuedFrames;
@@ -326,12 +332,12 @@ internal static class NativeUnitySettings
             return;
 
         var statuses = new List<string>();
-        var applicationClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "Application");
-        var deviceApplicationClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine.Device", "Application");
-        var qualitySettingsClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "QualitySettings");
-        var screenClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "Screen");
-        var deviceScreenClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine.Device", "Screen");
-        var onDemandRenderingClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine.Rendering", "OnDemandRendering");
+        var applicationClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine", "Application");
+        var deviceApplicationClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine.Device", "Application");
+        var qualitySettingsClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine", "QualitySettings");
+        var screenClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine", "Screen");
+        var deviceScreenClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine.Device", "Screen");
+        var onDemandRenderingClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine.Rendering", "OnDemandRendering");
 
         setTargetFrameRate = FindMethod(applicationClass, deviceApplicationClass, "set_targetFrameRate", 1, statuses);
         setVSyncCount = FindMethod(qualitySettingsClass, "set_vSyncCount", 1, statuses);
@@ -340,7 +346,7 @@ internal static class NativeUnitySettings
         setFullScreenMode = FindMethod(screenClass, deviceScreenClass, "set_fullScreenMode", 1, statuses);
         setRenderFrameInterval = FindMethod(onDemandRenderingClass, "set_renderFrameInterval", 1, statuses);
 
-        initStatus = string.Join(", ", statuses);
+        var initStatus = string.Join(", ", statuses);
         initialized = true;
         Plugin.Log.LogInfo($"Resolved native Unity setting icalls: {initStatus}");
     }
@@ -441,7 +447,7 @@ internal static class NativeUnitySettings
         if (requested == applied || FramePacingState.DetourLogCount >= 24)
             return;
 
-        FramePacingState.DetourLogCount++;
+        FramePacingState.IncrementDetourLogCount();
         Plugin.Log.LogInfo($"{name} intercepted: game requested {requested}, applied {applied}.");
     }
 
@@ -683,64 +689,15 @@ internal static class Il2CppFrameDiagnostics
                 return;
             }
 
-            uint assemblyCount = 0;
-            var assemblies = IL2CPP.il2cpp_domain_get_assemblies(domain, ref assemblyCount);
-            if (assemblies == null || assemblyCount == 0)
+            if (!TryGetAssemblies(domain, out var assemblies, out var assemblyCount))
             {
                 Plugin.Log.LogWarning("IL2CPP metadata scan skipped: no assemblies were visible.");
                 return;
             }
 
-            var report = new StringBuilder();
-            report.AppendLine($"LimbusFramePacingFix IL2CPP frame/display metadata scan {DateTime.Now:O}");
-            report.AppendLine($"Assembly count: {assemblyCount}");
-
-            var matchedTypes = 0;
-            for (uint assemblyIndex = 0; assemblyIndex < assemblyCount; assemblyIndex++)
-            {
-                var assembly = assemblies[assemblyIndex];
-                var image = IL2CPP.il2cpp_assembly_get_image(assembly);
-                if (image == IntPtr.Zero)
-                    continue;
-
-                var imageName = Safe(() => IL2CPP.il2cpp_image_get_name_(image));
-                if (!ShouldScanImage(imageName))
-                    continue;
-
-                var classCount = IL2CPP.il2cpp_image_get_class_count(image);
-                for (uint classIndex = 0; classIndex < classCount; classIndex++)
-                {
-                    var klass = IL2CPP.il2cpp_image_get_class(image, classIndex);
-                    if (klass == IntPtr.Zero)
-                        continue;
-
-                    var className = Safe(() => IL2CPP.il2cpp_class_get_name_(klass));
-                    var classNamespace = Safe(() => IL2CPP.il2cpp_class_get_namespace_(klass));
-                    var fullName = string.IsNullOrEmpty(classNamespace) ? className : $"{classNamespace}.{className}";
-                    var classMatched = ContainsKeyword(fullName);
-                    var detailed = IsDetailedTarget(fullName);
-
-                    var fields = CollectFields(klass, detailed);
-                    var methods = CollectMethods(klass, detailed);
-                    var memberMatched = fields.Exists(ContainsKeyword) || methods.Exists(ContainsKeyword);
-                    if (!classMatched && !memberMatched && !detailed)
-                        continue;
-
-                    matchedTypes++;
-                    report.AppendLine();
-                    report.AppendLine($"[{imageName}] {fullName}");
-                    if (fields.Count > 0)
-                        report.AppendLine("  fields: " + string.Join(", ", fields));
-                    if (methods.Count > 0)
-                        report.AppendLine("  methods: " + string.Join(", ", methods));
-                }
-            }
-
-            var dir = Path.Combine(Paths.BepInExRootPath, "plugins", Plugin.NAME);
-            Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, "frame-metadata-scan.txt");
-            File.WriteAllText(path, report.ToString());
-            Plugin.Log.LogInfo($"IL2CPP metadata scan wrote {matchedTypes} matching types to {path}.");
+            var report = CreateMetadataReport(assemblyCount);
+            var matchedTypes = AppendAssemblyMetadata(report, assemblies, assemblyCount);
+            WriteMetadataReport(report, matchedTypes);
         }
         catch (Exception ex)
         {
@@ -748,11 +705,93 @@ internal static class Il2CppFrameDiagnostics
         }
     }
 
+    private static unsafe bool TryGetAssemblies(IntPtr domain, out IntPtr* assemblies, out uint assemblyCount)
+    {
+        assemblyCount = 0;
+        assemblies = IL2CPP.il2cpp_domain_get_assemblies(domain, ref assemblyCount);
+        return assemblyCount > 0 && assemblies != null;
+    }
+
+    private static StringBuilder CreateMetadataReport(uint assemblyCount)
+    {
+        var report = new StringBuilder();
+        report.AppendLine($"LimbusFramePacingFix IL2CPP frame/display metadata scan {DateTime.Now:O}");
+        report.AppendLine($"Assembly count: {assemblyCount}");
+        return report;
+    }
+
+    private static unsafe int AppendAssemblyMetadata(StringBuilder report, IntPtr* assemblies, uint assemblyCount)
+    {
+        var matchedTypes = 0;
+        for (uint assemblyIndex = 0; assemblyIndex < assemblyCount; assemblyIndex++)
+        {
+            var image = IL2CPP.il2cpp_assembly_get_image(assemblies[assemblyIndex]);
+            if (image != IntPtr.Zero)
+                matchedTypes += AppendImageMetadata(report, image);
+        }
+
+        return matchedTypes;
+    }
+
+    private static int AppendImageMetadata(StringBuilder report, IntPtr image)
+    {
+        var imageName = Safe(() => IL2CPP.il2cpp_image_get_name_(image));
+        if (!ShouldScanImage(imageName))
+            return 0;
+
+        var matchedTypes = 0;
+        var classCount = IL2CPP.il2cpp_image_get_class_count(image);
+        for (uint classIndex = 0; classIndex < classCount; classIndex++)
+        {
+            var klass = IL2CPP.il2cpp_image_get_class(image, classIndex);
+            if (klass != IntPtr.Zero && TryAppendClassMetadata(report, imageName, klass))
+                matchedTypes++;
+        }
+
+        return matchedTypes;
+    }
+
+    private static bool TryAppendClassMetadata(StringBuilder report, string imageName, IntPtr klass)
+    {
+        var fullName = GetClassFullName(klass);
+        var detailed = IsDetailedTarget(fullName);
+        var fields = CollectFields(klass, detailed);
+        var methods = CollectMethods(klass, detailed);
+        var memberMatched = fields.Any(ContainsKeyword) || methods.Any(ContainsKeyword);
+        if (!ContainsKeyword(fullName) && !memberMatched && !detailed)
+            return false;
+
+        report.AppendLine();
+        report.AppendLine($"[{imageName}] {fullName}");
+        if (fields.Count > 0)
+            report.AppendLine("  fields: " + string.Join(", ", fields));
+        if (methods.Count > 0)
+            report.AppendLine("  methods: " + string.Join(", ", methods));
+
+        return true;
+    }
+
+    private static string GetClassFullName(IntPtr klass)
+    {
+        var className = Safe(() => IL2CPP.il2cpp_class_get_name_(klass));
+        var classNamespace = Safe(() => IL2CPP.il2cpp_class_get_namespace_(klass));
+        return string.IsNullOrEmpty(classNamespace) ? className : $"{classNamespace}.{className}";
+    }
+
+    private static void WriteMetadataReport(StringBuilder report, int matchedTypes)
+    {
+        var dir = Path.Combine(Paths.BepInExRootPath, "plugins", Plugin.NAME);
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "frame-metadata-scan.txt");
+        File.WriteAllText(path, report.ToString());
+        Plugin.Log.LogInfo($"IL2CPP metadata scan wrote {matchedTypes} matching types to {path}.");
+    }
+
     private static bool ShouldScanImage(string imageName)
     {
         return imageName.Equals("Assembly-CSharp.dll", StringComparison.OrdinalIgnoreCase)
             || imageName.StartsWith("Unity.AdaptivePerformance", StringComparison.OrdinalIgnoreCase)
-            || imageName.StartsWith("UnityEngine.CoreModule", StringComparison.OrdinalIgnoreCase);
+            || imageName.StartsWith(Plugin.UnityCoreModule, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsDetailedTarget(string fullName)
@@ -817,13 +856,7 @@ internal static class Il2CppFrameDiagnostics
 
     private static bool ContainsKeyword(string value)
     {
-        foreach (var keyword in Keywords)
-        {
-            if (value.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0)
-                return true;
-        }
-
-        return false;
+        return Keywords.Any(keyword => value.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
     private static string Safe(Func<string?> getter)
