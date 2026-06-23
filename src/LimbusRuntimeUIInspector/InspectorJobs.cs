@@ -2,8 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
-using LimbusRuntimeUIInspector.Contracts;
-using LimbusRuntimeUIInspector.Unity;
+using LimbusRuntimeUIInspector.Contracts.Api;
+using LimbusRuntimeUIInspector.Contracts.Elements;
+using LimbusRuntimeUIInspector.Contracts.Jobs;
+using LimbusRuntimeUIInspector.Unity.Capture;
+using LimbusRuntimeUIInspector.Unity.Detours;
+using LimbusRuntimeUIInspector.Unity.Runtime;
 
 namespace LimbusRuntimeUIInspector.Jobs;
 
@@ -51,7 +55,7 @@ internal static class InspectorJobs
         lock (sync)
         {
             jobs[job.JobId] = job;
-            if (UnityPumpDetour.EnsureInstalled())
+            if (UnityPumpDetour.EnsureInstalled(Pump))
             {
                 pending.Enqueue(job);
                 InspectorHost.Log.LogInfo($"Inspector {job.Kind} job {job.JobId} queued.");

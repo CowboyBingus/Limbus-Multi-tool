@@ -1,8 +1,9 @@
-using LimbusShared;
+using LimbusShared.Interop;
+using LimbusShared.Unity;
 using System;
-using LimbusRuntimeUIInspector.Contracts;
+using LimbusRuntimeUIInspector.Contracts.Elements;
 
-namespace LimbusRuntimeUIInspector.Unity;
+namespace LimbusRuntimeUIInspector.Unity.Runtime;
 
 internal static partial class UnityUiRuntime
 {

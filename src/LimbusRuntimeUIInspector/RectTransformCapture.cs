@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using LimbusRuntimeUIInspector.Contracts;
+using LimbusRuntimeUIInspector.Contracts.Scanning;
 
-namespace LimbusRuntimeUIInspector.Unity;
+namespace LimbusRuntimeUIInspector.Unity.Capture;
 
 internal static class RectTransformCapture
 {

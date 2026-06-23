@@ -1,10 +1,12 @@
-using LimbusShared;
+using LimbusShared.Interop;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using LimbusRuntimeUIInspector.Contracts;
+using LimbusRuntimeUIInspector.Contracts.Elements;
+using LimbusRuntimeUIInspector.Contracts.Scanning;
+using LimbusRuntimeUIInspector.Unity.Tracking;
 
-namespace LimbusRuntimeUIInspector.Unity;
+namespace LimbusRuntimeUIInspector.Unity.Runtime;
 
 internal static partial class UnityUiRuntime
 {

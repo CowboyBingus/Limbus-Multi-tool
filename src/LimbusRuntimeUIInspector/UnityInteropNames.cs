@@ -1,4 +1,4 @@
-namespace LimbusRuntimeUIInspector.Unity;
+namespace LimbusRuntimeUIInspector.Unity.Interop;
 
 internal static class UnityInteropNames
 {

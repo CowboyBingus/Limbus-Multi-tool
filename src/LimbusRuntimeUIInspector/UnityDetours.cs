@@ -1,12 +1,13 @@
 using Il2CppInterop.Runtime;
-using LimbusShared;
+using LimbusShared.Detours;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Runtime.InteropServices;
-using LimbusRuntimeUIInspector.Jobs;
-using static LimbusShared.NativeInterop;
+using LimbusRuntimeUIInspector.Unity.Interop;
+using LimbusRuntimeUIInspector.Unity.Tracking;
+using static LimbusShared.Interop.NativeInterop;
 
-namespace LimbusRuntimeUIInspector.Unity;
+namespace LimbusRuntimeUIInspector.Unity.Detours;
 
 internal static class UnityPumpDetour
 {
@@ -16,10 +17,12 @@ internal static class UnityPumpDetour
     private static NativeDetour? detour;
     private static StaticVoidDelegate? original;
     private static readonly StaticVoidDelegate replacement = Replacement;
+    private static Action? pump;
     [ThreadStatic] private static bool inReplacement;
 
-    public static bool EnsureInstalled()
+    public static bool EnsureInstalled(Action pumpAction)
     {
+        pump = pumpAction;
         if (detour != null)
             return true;
 
@@ -62,6 +65,7 @@ internal static class UnityPumpDetour
 
     public static void Uninstall()
     {
+        pump = null;
         DetourLifecycle.Free(ref detour, ref original);
     }
 
@@ -77,7 +81,7 @@ internal static class UnityPumpDetour
         try
         {
             original?.Invoke(methodInfo);
-            InspectorJobs.Pump();
+            pump?.Invoke();
         }
         finally
         {

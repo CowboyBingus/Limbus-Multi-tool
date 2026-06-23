@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace LimbusShared;
+namespace LimbusShared.Unity;
 
 [StructLayout(LayoutKind.Sequential)]
 internal struct Vector2Value

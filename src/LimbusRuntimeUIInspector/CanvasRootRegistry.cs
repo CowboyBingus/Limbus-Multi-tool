@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 
-namespace LimbusRuntimeUIInspector.Unity;
+namespace LimbusRuntimeUIInspector.Unity.Tracking;
 
 internal static class CanvasRootRegistry
 {
@@ -11,6 +11,9 @@ internal static class CanvasRootRegistry
 
     private static readonly object sync = new();
     private static readonly Dictionary<IntPtr, long> rootsSeen = new();
+    private static Func<IntPtr, IntPtr>? transformFromComponent;
+    private static Func<IntPtr, IntPtr>? transformFromGameObject;
+    private static Func<IntPtr, IntPtr>? topmostTransform;
     private static long sequence;
     private static int observedCount;
     private static int failureCount;
@@ -24,6 +27,16 @@ internal static class CanvasRootRegistry
         }
     }
 
+    public static void Configure(
+        Func<IntPtr, IntPtr> componentTransformResolver,
+        Func<IntPtr, IntPtr> gameObjectTransformResolver,
+        Func<IntPtr, IntPtr> topmostTransformResolver)
+    {
+        transformFromComponent = componentTransformResolver;
+        transformFromGameObject = gameObjectTransformResolver;
+        topmostTransform = topmostTransformResolver;
+    }
+
     public static void ObserveComponent(IntPtr component, string source)
     {
         if (component == IntPtr.Zero)
@@ -31,7 +44,11 @@ internal static class CanvasRootRegistry
 
         try
         {
-            var transform = UnityUiRuntime.TryGetTransformFromComponent(component);
+            var resolver = transformFromComponent;
+            if (resolver == null)
+                return;
+
+            var transform = resolver(component);
             ObserveTransformAndAncestors(transform, source);
         }
         catch (Exception ex)
@@ -49,7 +66,11 @@ internal static class CanvasRootRegistry
 
         try
         {
-            var transform = UnityUiRuntime.TryGetTransformFromGameObject(gameObject);
+            var resolver = transformFromGameObject;
+            if (resolver == null)
+                return;
+
+            var transform = resolver(gameObject);
             ObserveTransformAndAncestors(transform, source);
         }
         catch (Exception ex)
@@ -68,7 +89,11 @@ internal static class CanvasRootRegistry
         int rootCount;
         try
         {
-            var root = UnityUiRuntime.TryGetTopmostTransform(transform);
+            var resolver = topmostTransform;
+            if (resolver == null)
+                return;
+
+            var root = resolver(transform);
             if (root == IntPtr.Zero)
                 return;
 

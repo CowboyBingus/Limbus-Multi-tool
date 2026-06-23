@@ -2,12 +2,14 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
-using LimbusShared;
+using LimbusShared.Configuration;
+using LimbusShared.Detours;
+using LimbusShared.Interop;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-using static LimbusShared.NativeInterop;
+using static LimbusShared.Interop.NativeInterop;
 
 namespace LimbusHdrBalanceFix;
 
@@ -54,20 +56,23 @@ public sealed class Plugin : BasePlugin
         BindConfig(Config);
         HdrBalanceHost.Initialize(
             base.Log,
-            Enabled,
-            ReapplyIntervalSeconds,
-            ApplyHdrOutputSettings,
-            DisableAutomaticHdrTonemapping,
-            PaperWhiteNits,
-            ClampBloom,
-            BloomThresholdMin,
-            BloomIntensityMax,
-            BloomScatterMax,
-            ClampColorAdjustments,
-            PostExposureMaxEv,
-            TonemappingMode,
-            ForceParameterOverrides,
-            DebugLogging);
+            new HdrBalanceSettings
+            {
+                Enabled = Enabled,
+                ReapplyIntervalSeconds = ReapplyIntervalSeconds,
+                ApplyHdrOutputSettings = ApplyHdrOutputSettings,
+                DisableAutomaticHdrTonemapping = DisableAutomaticHdrTonemapping,
+                PaperWhiteNits = PaperWhiteNits,
+                ClampBloom = ClampBloom,
+                BloomThresholdMin = BloomThresholdMin,
+                BloomIntensityMax = BloomIntensityMax,
+                BloomScatterMax = BloomScatterMax,
+                ClampColorAdjustments = ClampColorAdjustments,
+                PostExposureMaxEv = PostExposureMaxEv,
+                TonemappingMode = TonemappingMode,
+                ForceParameterOverrides = ForceParameterOverrides,
+                DebugLogging = DebugLogging
+            });
 
         HdrBalanceHost.Log.LogInfo($"{NAME} {VERSION} loading...");
 

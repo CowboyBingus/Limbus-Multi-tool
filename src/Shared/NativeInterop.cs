@@ -1,6 +1,6 @@
 using System;
 
-namespace LimbusShared;
+namespace LimbusShared.Interop;
 
 internal static class NativeInterop
 {

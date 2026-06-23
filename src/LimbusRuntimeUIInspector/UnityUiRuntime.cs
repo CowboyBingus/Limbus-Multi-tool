@@ -1,12 +1,13 @@
 using Il2CppInterop.Runtime;
-using LimbusShared;
+using LimbusShared.Interop;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using static LimbusShared.Il2CppLookup;
+using LimbusRuntimeUIInspector.Unity.Interop;
+using static LimbusShared.Interop.Il2CppLookup;
 
-namespace LimbusRuntimeUIInspector.Unity;
+namespace LimbusRuntimeUIInspector.Unity.Runtime;
 
 internal static partial class UnityUiRuntime
 {

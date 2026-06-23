@@ -7,7 +7,8 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
-using LimbusRuntimeUIInspector.Contracts;
+using LimbusRuntimeUIInspector.Contracts.Api;
+using LimbusRuntimeUIInspector.Contracts.Jobs;
 using LimbusRuntimeUIInspector.Jobs;
 
 namespace LimbusRuntimeUIInspector.Server;

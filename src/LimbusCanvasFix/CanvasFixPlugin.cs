@@ -2,14 +2,16 @@ using BepInEx;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
-using LimbusShared;
+using LimbusShared.Detours;
+using LimbusShared.Interop;
+using LimbusShared.Unity;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Linq;
-using static LimbusShared.Il2CppLookup;
-using static LimbusShared.NativeInterop;
+using static LimbusShared.Interop.Il2CppLookup;
+using static LimbusShared.Interop.NativeInterop;
 
 namespace LimbusCanvasFix
 {

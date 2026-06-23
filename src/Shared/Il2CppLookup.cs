@@ -2,7 +2,7 @@ using Il2CppInterop.Runtime;
 using System;
 using System.Runtime.InteropServices;
 
-namespace LimbusShared;
+namespace LimbusShared.Interop;
 
 internal static class Il2CppLookup
 {

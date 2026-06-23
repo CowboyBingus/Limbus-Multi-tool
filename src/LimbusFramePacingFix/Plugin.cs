@@ -2,7 +2,8 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
-using LimbusShared;
+using LimbusShared.Configuration;
+using LimbusShared.Detours;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Collections.Generic;
@@ -11,7 +12,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
-using static LimbusShared.NativeInterop;
+using static LimbusShared.Interop.NativeInterop;
 
 namespace LimbusFramePacingFix;
 
@@ -55,18 +56,21 @@ public sealed class Plugin : BasePlugin
         BindConfig(Config);
         FramePacingHost.Initialize(
             base.Log,
-            Enabled,
-            TargetFrameRate,
-            VSyncCount,
-            ForceMaximizedWindow,
-            RunInBackground,
-            AllowDisplayModeChanges,
-            ForceOnDemandEveryFrame,
-            MaxQueuedFrames,
-            ReapplyIntervalSeconds,
-            ApplyNativeUnitySettings,
-            PatchGameFrameRateMethods,
-            DumpMetadataOnLoad);
+            new FramePacingSettings
+            {
+                Enabled = Enabled,
+                TargetFrameRate = TargetFrameRate,
+                VSyncCount = VSyncCount,
+                ForceMaximizedWindow = ForceMaximizedWindow,
+                RunInBackground = RunInBackground,
+                AllowDisplayModeChanges = AllowDisplayModeChanges,
+                ForceOnDemandEveryFrame = ForceOnDemandEveryFrame,
+                MaxQueuedFrames = MaxQueuedFrames,
+                ReapplyIntervalSeconds = ReapplyIntervalSeconds,
+                ApplyNativeUnitySettings = ApplyNativeUnitySettings,
+                PatchGameFrameRateMethods = PatchGameFrameRateMethods,
+                DumpMetadataOnLoad = DumpMetadataOnLoad
+            });
 
         CanvasScalerFramePacingDetour.Install();
         NativeUnitySettings.InstallSetterDetours();

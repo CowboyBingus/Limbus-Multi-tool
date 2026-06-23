@@ -1,8 +1,9 @@
 using MonoMod.RuntimeDetour;
 using System;
 using System.Runtime.InteropServices;
+using LimbusShared.Interop;
 
-namespace LimbusShared;
+namespace LimbusShared.Detours;
 
 internal static class DetourLifecycle
 {

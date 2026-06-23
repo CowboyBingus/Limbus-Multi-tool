@@ -1,7 +1,7 @@
 using BepInEx.Configuration;
 using System;
 
-namespace LimbusShared;
+namespace LimbusShared.Configuration;
 
 internal static class PluginConfig
 {

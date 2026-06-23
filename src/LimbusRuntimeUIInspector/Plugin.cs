@@ -2,8 +2,10 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using LimbusRuntimeUIInspector.Server;
-using LimbusRuntimeUIInspector.Unity;
-using LimbusShared;
+using LimbusRuntimeUIInspector.Unity.Detours;
+using LimbusRuntimeUIInspector.Unity.Runtime;
+using LimbusRuntimeUIInspector.Unity.Tracking;
+using LimbusShared.Configuration;
 using System;
 
 namespace LimbusRuntimeUIInspector;
@@ -31,6 +33,10 @@ public sealed class Plugin : BasePlugin
     {
         BindConfig(Config);
         InspectorHost.Initialize(base.Log, MaxResults, DebugLogging);
+        CanvasRootRegistry.Configure(
+            UnityUiRuntime.TryGetTransformFromComponent,
+            UnityUiRuntime.TryGetTransformFromGameObject,
+            UnityUiRuntime.TryGetTopmostTransform);
 
         InspectorHost.Debug("Load begin.");
         if (Enabled.Value)

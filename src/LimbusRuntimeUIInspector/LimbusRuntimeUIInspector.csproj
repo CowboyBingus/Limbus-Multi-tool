@@ -17,16 +17,19 @@
 
   <ItemGroup>
     <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+    <Compile Include="ApiContracts.cs" />
     <Compile Include="CanvasRootRegistry.cs" />
     <Compile Include="ContentTypes.cs" />
-    <Compile Include="Contracts.cs" />
+    <Compile Include="ElementContracts.cs" />
     <Compile Include="InspectorJobs.cs" />
     <Compile Include="InspectorHost.cs" />
     <Compile Include="InspectorPage.cs" />
     <Compile Include="InspectorServer.cs" />
+    <Compile Include="JobContracts.cs" />
     <Compile Include="JsonOptions.cs" />
     <Compile Include="Plugin.cs" />
     <Compile Include="RectTransformCapture.cs" />
+    <Compile Include="ScanContracts.cs" />
     <Compile Include="UnityDetours.cs" />
     <Compile Include="UnityInteropNames.cs" />
     <Compile Include="UnityUiRuntime.cs" />
