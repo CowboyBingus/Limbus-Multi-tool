@@ -101,17 +101,22 @@ public sealed class Plugin : BasePlugin
         dumpMetadataOnLoad = config.Bind(DiagnosticsSection, "DumpMetadataOnLoad", false, "Writes an IL2CPP frame/display metadata scan for reverse engineering. Leave off for normal play.");
     }
 
-    internal static bool IsEnabled => enabled?.Value == true;
-    internal static bool ShouldApplyNativeUnitySettings => IsEnabled && applyNativeUnitySettings?.Value == true;
-    internal static bool ShouldPatchGameFrameRateMethods => IsEnabled && patchGameFrameRateMethods?.Value == true;
+    internal static bool IsEnabled => IsSet(enabled);
+    internal static bool ShouldApplyNativeUnitySettings => IsEnabled && IsSet(applyNativeUnitySettings);
+    internal static bool ShouldPatchGameFrameRateMethods => IsEnabled && IsSet(patchGameFrameRateMethods);
     internal static bool ShouldForceMaximizedWindow =>
         IsEnabled &&
-        allowDisplayModeChanges?.Value == true &&
-        forceMaximizedWindow?.Value == true;
+        IsSet(allowDisplayModeChanges) &&
+        IsSet(forceMaximizedWindow);
 
     private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name)
     {
         return entry ?? throw new InvalidOperationException($"{NAME} config entry '{name}' is not initialized.");
+    }
+
+    private static bool IsSet(ConfigEntry<bool>? entry)
+    {
+        return entry?.Value ?? false;
     }
 }
 
@@ -709,7 +714,7 @@ internal static class Il2CppFrameDiagnostics
     {
         assemblyCount = 0;
         assemblies = IL2CPP.il2cpp_domain_get_assemblies(domain, ref assemblyCount);
-        return assemblyCount > 0 && assemblies != null;
+        return assemblyCount > 0;
     }
 
     private static StringBuilder CreateMetadataReport(uint assemblyCount)

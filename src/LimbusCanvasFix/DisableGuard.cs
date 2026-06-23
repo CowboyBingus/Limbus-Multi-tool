@@ -55,7 +55,7 @@ namespace LimbusCanvasFix
             }
             catch (ReflectionTypeLoadException ex)
             {
-                return ex.Types.Where(type => type != null).Cast<Type>().ToArray();
+                return ex.Types.Where(type => type != null).ToArray()!;
             }
         }
 

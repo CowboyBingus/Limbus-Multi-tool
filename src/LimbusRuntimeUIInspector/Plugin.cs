@@ -69,7 +69,7 @@ public sealed class Plugin : BasePlugin
 
     internal static void Debug(string message)
     {
-        if (debugLogging?.Value == true)
+        if (IsSet(debugLogging))
             Log.LogInfo($"[debug] {message}");
     }
 
@@ -90,6 +90,11 @@ public sealed class Plugin : BasePlugin
     private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name)
     {
         return entry ?? throw new InvalidOperationException($"{NAME} config entry '{name}' is not initialized.");
+    }
+
+    private static bool IsSet(ConfigEntry<bool>? entry)
+    {
+        return entry?.Value ?? false;
     }
 }
 
