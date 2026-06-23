@@ -16,27 +16,44 @@ public sealed class Plugin : BasePlugin
     public const string GUID = "com.you.limbushdrbalancefix";
     public const string NAME = "LimbusHdrBalanceFix";
     public const string VERSION = "0.3.0";
+    private const string BloomSection = "URP Bloom";
 
-    internal static new ManualLogSource Log = null!;
-    internal static ConfigEntry<bool> Enabled = null!;
-    internal static ConfigEntry<float> ReapplyIntervalSeconds = null!;
-    internal static ConfigEntry<bool> ApplyHdrOutputSettings = null!;
-    internal static ConfigEntry<bool> DisableAutomaticHdrTonemapping = null!;
-    internal static ConfigEntry<float> PaperWhiteNits = null!;
-    internal static ConfigEntry<bool> ClampBloom = null!;
-    internal static ConfigEntry<float> BloomThresholdMin = null!;
-    internal static ConfigEntry<float> BloomIntensityMax = null!;
-    internal static ConfigEntry<float> BloomScatterMax = null!;
-    internal static ConfigEntry<bool> ClampColorAdjustments = null!;
-    internal static ConfigEntry<float> PostExposureMaxEv = null!;
-    internal static ConfigEntry<int> TonemappingMode = null!;
-    internal static ConfigEntry<bool> ForceParameterOverrides = null!;
-    internal static ConfigEntry<bool> DebugLogging = null!;
+    private static ManualLogSource? log;
+    private static ConfigEntry<bool>? enabled;
+    private static ConfigEntry<float>? reapplyIntervalSeconds;
+    private static ConfigEntry<bool>? applyHdrOutputSettings;
+    private static ConfigEntry<bool>? disableAutomaticHdrTonemapping;
+    private static ConfigEntry<float>? paperWhiteNits;
+    private static ConfigEntry<bool>? clampBloom;
+    private static ConfigEntry<float>? bloomThresholdMin;
+    private static ConfigEntry<float>? bloomIntensityMax;
+    private static ConfigEntry<float>? bloomScatterMax;
+    private static ConfigEntry<bool>? clampColorAdjustments;
+    private static ConfigEntry<float>? postExposureMaxEv;
+    private static ConfigEntry<int>? tonemappingMode;
+    private static ConfigEntry<bool>? forceParameterOverrides;
+    private static ConfigEntry<bool>? debugLogging;
+
+    internal static new ManualLogSource Log => log ?? throw new InvalidOperationException($"{NAME} logging is not initialized.");
+    internal static ConfigEntry<bool> Enabled => Required(enabled, nameof(Enabled));
+    internal static ConfigEntry<float> ReapplyIntervalSeconds => Required(reapplyIntervalSeconds, nameof(ReapplyIntervalSeconds));
+    internal static ConfigEntry<bool> ApplyHdrOutputSettings => Required(applyHdrOutputSettings, nameof(ApplyHdrOutputSettings));
+    internal static ConfigEntry<bool> DisableAutomaticHdrTonemapping => Required(disableAutomaticHdrTonemapping, nameof(DisableAutomaticHdrTonemapping));
+    internal static ConfigEntry<float> PaperWhiteNits => Required(paperWhiteNits, nameof(PaperWhiteNits));
+    internal static ConfigEntry<bool> ClampBloom => Required(clampBloom, nameof(ClampBloom));
+    internal static ConfigEntry<float> BloomThresholdMin => Required(bloomThresholdMin, nameof(BloomThresholdMin));
+    internal static ConfigEntry<float> BloomIntensityMax => Required(bloomIntensityMax, nameof(BloomIntensityMax));
+    internal static ConfigEntry<float> BloomScatterMax => Required(bloomScatterMax, nameof(BloomScatterMax));
+    internal static ConfigEntry<bool> ClampColorAdjustments => Required(clampColorAdjustments, nameof(ClampColorAdjustments));
+    internal static ConfigEntry<float> PostExposureMaxEv => Required(postExposureMaxEv, nameof(PostExposureMaxEv));
+    internal static ConfigEntry<int> TonemappingMode => Required(tonemappingMode, nameof(TonemappingMode));
+    internal static ConfigEntry<bool> ForceParameterOverrides => Required(forceParameterOverrides, nameof(ForceParameterOverrides));
+    internal static ConfigEntry<bool> DebugLogging => Required(debugLogging, nameof(DebugLogging));
 
     public override void Load()
     {
-        Log = base.Log;
-        BindConfig();
+        InitializeLog(base.Log);
+        BindConfig(Config);
 
         Log.LogInfo($"{NAME} {VERSION} loading...");
 
@@ -62,30 +79,40 @@ public sealed class Plugin : BasePlugin
         return true;
     }
 
-    private void BindConfig()
+    private static void InitializeLog(ManualLogSource source)
     {
-        Enabled = Config.Bind("General", "Enabled", true, "Master switch for HDR highlight balancing.");
-        ReapplyIntervalSeconds = Config.Bind("General", "ReapplyIntervalSeconds", 1.0f, "How often the runtime pump reapplies HDR output and known volume-profile clamps.");
-        ApplyHdrOutputSettings = Config.Bind("HDR output", "ApplyHdrOutputSettings", true, "Applies Unity HDR output paper-white settings without requesting HDR off.");
-        DisableAutomaticHdrTonemapping = Config.Bind("HDR output", "DisableAutomaticHdrTonemapping", true, "Disables Unity's automatic HDR tonemapping so display auto-detection does not over-brighten SDR whites.");
-        PaperWhiteNits = Config.Bind("HDR output", "PaperWhiteNits", 160f, "Manual HDR paper-white target. Lower values dim SDR whites on HDR displays. Typical values are 120-220.");
-        ClampBloom = Config.Bind("URP Bloom", "ClampBloom", true, "Clamps URP Bloom volume parameters so white UI/art does not bloom into detail-destroying highlights.");
-        BloomThresholdMin = Config.Bind("URP Bloom", "BloomThresholdMin", 1.05f, "Minimum Bloom threshold. Values above 1.0 keep ordinary SDR white from feeding bloom.");
-        BloomIntensityMax = Config.Bind("URP Bloom", "BloomIntensityMax", 0.35f, "Maximum Bloom intensity.");
-        BloomScatterMax = Config.Bind("URP Bloom", "BloomScatterMax", 0.45f, "Maximum Bloom scatter.");
-        ClampColorAdjustments = Config.Bind("URP Color", "ClampColorAdjustments", true, "Caps URP ColorAdjustments post exposure when present.");
-        PostExposureMaxEv = Config.Bind("URP Color", "PostExposureMaxEv", -0.20f, "Maximum post exposure in EV. Negative values gently compress highlights before tonemapping.");
-        TonemappingMode = Config.Bind("URP Tonemapping", "TonemappingMode", -1, "URP Tonemapping mode override. -1 leaves the game value unchanged. Unity URP commonly uses 0=None, 1=Neutral, 2=ACES.");
-        ForceParameterOverrides = Config.Bind("URP Volume", "ForceParameterOverrides", true, "Forces patched volume parameters to override so clamps apply even if the source profile left the override flag off.");
-        DebugLogging = Config.Bind("Diagnostics", "DebugLogging", false, "Writes additional field/method resolution and patch diagnostics.");
+        log = source;
     }
 
-    internal static bool IsEnabled => Enabled != null && Enabled.Value;
+    private static void BindConfig(ConfigFile config)
+    {
+        enabled = config.Bind("General", "Enabled", true, "Master switch for HDR highlight balancing.");
+        reapplyIntervalSeconds = config.Bind("General", "ReapplyIntervalSeconds", 1.0f, "How often the runtime pump reapplies HDR output and known volume-profile clamps.");
+        applyHdrOutputSettings = config.Bind("HDR output", "ApplyHdrOutputSettings", true, "Applies Unity HDR output paper-white settings without requesting HDR off.");
+        disableAutomaticHdrTonemapping = config.Bind("HDR output", "DisableAutomaticHdrTonemapping", true, "Disables Unity's automatic HDR tonemapping so display auto-detection does not over-brighten SDR whites.");
+        paperWhiteNits = config.Bind("HDR output", "PaperWhiteNits", 160f, "Manual HDR paper-white target. Lower values dim SDR whites on HDR displays. Typical values are 120-220.");
+        clampBloom = config.Bind(BloomSection, "ClampBloom", true, "Clamps URP Bloom volume parameters so white UI/art does not bloom into detail-destroying highlights.");
+        bloomThresholdMin = config.Bind(BloomSection, "BloomThresholdMin", 1.05f, "Minimum Bloom threshold. Values above 1.0 keep ordinary SDR white from feeding bloom.");
+        bloomIntensityMax = config.Bind(BloomSection, "BloomIntensityMax", 0.35f, "Maximum Bloom intensity.");
+        bloomScatterMax = config.Bind(BloomSection, "BloomScatterMax", 0.45f, "Maximum Bloom scatter.");
+        clampColorAdjustments = config.Bind("URP Color", "ClampColorAdjustments", true, "Caps URP ColorAdjustments post exposure when present.");
+        postExposureMaxEv = config.Bind("URP Color", "PostExposureMaxEv", -0.20f, "Maximum post exposure in EV. Negative values gently compress highlights before tonemapping.");
+        tonemappingMode = config.Bind("URP Tonemapping", "TonemappingMode", -1, "URP Tonemapping mode override. -1 leaves the game value unchanged. Unity URP commonly uses 0=None, 1=Neutral, 2=ACES.");
+        forceParameterOverrides = config.Bind("URP Volume", "ForceParameterOverrides", true, "Forces patched volume parameters to override so clamps apply even if the source profile left the override flag off.");
+        debugLogging = config.Bind("Diagnostics", "DebugLogging", false, "Writes additional field/method resolution and patch diagnostics.");
+    }
+
+    internal static bool IsEnabled => enabled != null && enabled.Value;
 
     internal static void Debug(string message)
     {
-        if (DebugLogging != null && DebugLogging.Value)
+        if (debugLogging != null && debugLogging.Value)
             Log.LogInfo($"[debug] {message}");
+    }
+
+    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name)
+    {
+        return entry ?? throw new InvalidOperationException($"{NAME} config entry '{name}' is not initialized.");
     }
 }
 
@@ -387,82 +414,118 @@ internal static class HdrOutputSettingsPatcher
         {
             EnsureInitialized();
 
-            var changes = new List<string>();
-            var available = TryGetBool(getAvailable, "GetAvailable", out var availableValue) ? availableValue : (bool?)null;
-            var active = TryGetBool(getActive, "GetActive", out var activeValue) ? activeValue : (bool?)null;
-            bool? automatic = null;
-            float? paperBefore = null;
-            int? minTone = null;
-            int? maxTone = null;
-            int? maxFullFrame = null;
-
-            if (available == true)
-            {
-                automatic = TryGetBool(getAutomaticHdrTonemapping, "GetAutomaticHDRTonemapping", out var automaticValue) ? automaticValue : (bool?)null;
-                paperBefore = TryGetFloat(getPaperWhiteNits, "GetPaperWhiteNits", out var currentPaperWhite) ? currentPaperWhite : (float?)null;
-                minTone = TryGetInt(getMinToneMapLuminance, "GetMinToneMapLuminance", out var minToneValue) ? minToneValue : (int?)null;
-                maxTone = TryGetInt(getMaxToneMapLuminance, "GetMaxToneMapLuminance", out var maxToneValue) ? maxToneValue : (int?)null;
-                maxFullFrame = TryGetInt(getMaxFullFrameToneMapLuminance, "GetMaxFullFrameToneMapLuminance", out var maxFullFrameValue) ? maxFullFrameValue : (int?)null;
-
-                if (Plugin.DisableAutomaticHdrTonemapping.Value && automatic == true)
-                {
-                    if (TrySetBool(setAutomaticHdrTonemapping, "SetAutomaticHDRTonemapping", false))
-                    {
-                        changes.Add("automaticHDRTonemapping true->false");
-                        automatic = false;
-                    }
-                }
-                else if (Plugin.DisableAutomaticHdrTonemapping.Value && automatic == false)
-                {
-                    changes.Add("automaticHDRTonemapping=false");
-                }
-
-                var paperWhite = Math.Clamp(Plugin.PaperWhiteNits.Value, 80f, 500f);
-                if (setPaperWhiteNits != null)
-                {
-                    if (!paperBefore.HasValue || Math.Abs(paperBefore.Value - paperWhite) > 0.25f)
-                    {
-                        if (TrySetFloat(setPaperWhiteNits, "SetPaperWhiteNits", paperWhite))
-                            changes.Add(paperBefore.HasValue ? $"paperWhiteNits {paperBefore.Value:0.#}->{paperWhite:0.#}" : $"paperWhiteNits={paperWhite:0.#}");
-                    }
-                    else
-                    {
-                        changes.Add($"paperWhiteNits={paperBefore.Value:0.#}");
-                    }
-                }
-                else
-                {
-                    changes.Add("paperWhiteNits skipped: SetPaperWhiteNits icall missing");
-                }
-            }
-            else if (available == false)
-            {
-                changes.Add("paperWhiteNits skipped: HDR unavailable");
-            }
-            else
-            {
-                changes.Add("paperWhiteNits skipped: HDR availability unknown");
-            }
-
-            var nextCount = applyCount + 1;
-            if (forceLog || nextCount <= 6 || (changes.Count > 0 && nextCount <= 20) || nextCount % 120 == 0)
-            {
-                applyCount = nextCount;
-                Plugin.Log.LogInfo(
-                    $"HDR output apply #{nextCount} ({reason}): " +
-                    $"available={FormatBool(available)}, active={FormatBool(active)}, automatic={FormatBool(automatic)}, " +
-                    $"paperWhite={FormatFloat(paperBefore)}, toneMap={FormatInt(minTone)}-{FormatInt(maxTone)}/full={FormatInt(maxFullFrame)}, " +
-                    (changes.Count == 0 ? "no changes" : string.Join(", ", changes)) + ".");
-            }
-            else
-            {
-                applyCount = nextCount;
-            }
+            var state = ReadState();
+            ApplyConfiguredChanges(state);
+            LogApply(reason, forceLog, state);
         }
         catch (Exception ex)
         {
             ReportFailure("HDR output apply", ex);
         }
+    }
+
+    private static HdrOutputState ReadState()
+    {
+        var state = new HdrOutputState
+        {
+            Available = TryGetBool(getAvailable, "GetAvailable", out var availableValue) ? (bool?)availableValue : null,
+            Active = TryGetBool(getActive, "GetActive", out var activeValue) ? (bool?)activeValue : null
+        };
+
+        if (state.Available != true)
+            return state;
+
+        state.Automatic = TryGetBool(getAutomaticHdrTonemapping, "GetAutomaticHDRTonemapping", out var automaticValue) ? (bool?)automaticValue : null;
+        state.PaperWhiteBefore = TryGetFloat(getPaperWhiteNits, "GetPaperWhiteNits", out var currentPaperWhite) ? (float?)currentPaperWhite : null;
+        state.MinTone = TryGetInt(getMinToneMapLuminance, "GetMinToneMapLuminance", out var minToneValue) ? (int?)minToneValue : null;
+        state.MaxTone = TryGetInt(getMaxToneMapLuminance, "GetMaxToneMapLuminance", out var maxToneValue) ? (int?)maxToneValue : null;
+        state.MaxFullFrameTone = TryGetInt(getMaxFullFrameToneMapLuminance, "GetMaxFullFrameToneMapLuminance", out var maxFullFrameValue) ? (int?)maxFullFrameValue : null;
+        return state;
+    }
+
+    private static void ApplyConfiguredChanges(HdrOutputState state)
+    {
+        if (state.Available == false)
+        {
+            state.Changes.Add("paperWhiteNits skipped: HDR unavailable");
+            return;
+        }
+
+        if (state.Available != true)
+        {
+            state.Changes.Add("paperWhiteNits skipped: HDR availability unknown");
+            return;
+        }
+
+        ApplyAutomaticTonemappingSetting(state);
+        ApplyPaperWhiteSetting(state);
+    }
+
+    private static void ApplyAutomaticTonemappingSetting(HdrOutputState state)
+    {
+        if (!Plugin.DisableAutomaticHdrTonemapping.Value)
+            return;
+
+        if (state.Automatic == false)
+        {
+            state.Changes.Add("automaticHDRTonemapping=false");
+            return;
+        }
+
+        if (state.Automatic == true && TrySetBool(setAutomaticHdrTonemapping, "SetAutomaticHDRTonemapping", false))
+        {
+            state.Changes.Add("automaticHDRTonemapping true->false");
+            state.Automatic = false;
+        }
+    }
+
+    private static void ApplyPaperWhiteSetting(HdrOutputState state)
+    {
+        var paperWhite = Math.Clamp(Plugin.PaperWhiteNits.Value, 80f, 500f);
+        if (setPaperWhiteNits == null)
+        {
+            state.Changes.Add("paperWhiteNits skipped: SetPaperWhiteNits icall missing");
+            return;
+        }
+
+        if (state.PaperWhiteBefore.HasValue && Math.Abs(state.PaperWhiteBefore.Value - paperWhite) <= 0.25f)
+        {
+            state.Changes.Add($"paperWhiteNits={state.PaperWhiteBefore.Value:0.#}");
+            return;
+        }
+
+        if (TrySetFloat(setPaperWhiteNits, "SetPaperWhiteNits", paperWhite))
+        {
+            state.Changes.Add(state.PaperWhiteBefore.HasValue
+                ? $"paperWhiteNits {state.PaperWhiteBefore.Value:0.#}->{paperWhite:0.#}"
+                : $"paperWhiteNits={paperWhite:0.#}");
+        }
+    }
+
+    private static void LogApply(string reason, bool forceLog, HdrOutputState state)
+    {
+        var nextCount = applyCount + 1;
+        applyCount = nextCount;
+        if (!forceLog && nextCount > 6 && (state.Changes.Count == 0 || nextCount > 20) && nextCount % 120 != 0)
+            return;
+
+        Plugin.Log.LogInfo(
+            $"HDR output apply #{nextCount} ({reason}): " +
+            $"available={FormatBool(state.Available)}, active={FormatBool(state.Active)}, automatic={FormatBool(state.Automatic)}, " +
+            $"paperWhite={FormatFloat(state.PaperWhiteBefore)}, toneMap={FormatInt(state.MinTone)}-{FormatInt(state.MaxTone)}/full={FormatInt(state.MaxFullFrameTone)}, " +
+            (state.Changes.Count == 0 ? "no changes" : string.Join(", ", state.Changes)) + ".");
+    }
+
+    private sealed class HdrOutputState
+    {
+        public bool? Available { get; set; }
+        public bool? Active { get; set; }
+        public bool? Automatic { get; set; }
+        public float? PaperWhiteBefore { get; set; }
+        public int? MinTone { get; set; }
+        public int? MaxTone { get; set; }
+        public int? MaxFullFrameTone { get; set; }
+        public List<string> Changes { get; } = new();
     }
 
     private static void EnsureInitialized()
@@ -603,10 +666,9 @@ internal static class HdrOutputSettingsPatcher
 
 internal static unsafe class VolumeProfilePatcher
 {
+    private const string SerializedValueField = "m_Value";
     private static readonly List<IntPtr> knownProfileHandles = new();
     private static bool initialized;
-    private static IntPtr volumeClass;
-    private static IntPtr volumeProfileClass;
     private static IntPtr volumeGetProfile;
     private static IntPtr volumeGetSharedProfile;
     private static IntPtr profileComponentsField;
@@ -618,7 +680,7 @@ internal static unsafe class VolumeProfilePatcher
     {
         foreach (var handle in knownProfileHandles)
         {
-            try { IL2CPP.il2cpp_gchandle_free(handle); } catch { }
+            try { IL2CPP.il2cpp_gchandle_free(handle); } catch { /* Weak handle cleanup is best-effort during plugin unload. */ }
         }
 
         knownProfileHandles.Clear();
@@ -711,7 +773,7 @@ internal static unsafe class VolumeProfilePatcher
 
             if (profile == IntPtr.Zero)
             {
-                try { IL2CPP.il2cpp_gchandle_free(handle); } catch { }
+                try { IL2CPP.il2cpp_gchandle_free(handle); } catch { /* Stale weak handles are removed from the cache even if native cleanup fails. */ }
                 knownProfileHandles.RemoveAt(i);
                 continue;
             }
@@ -737,7 +799,7 @@ internal static unsafe class VolumeProfilePatcher
 
             if (target == IntPtr.Zero)
             {
-                try { IL2CPP.il2cpp_gchandle_free(handle); } catch { }
+                try { IL2CPP.il2cpp_gchandle_free(handle); } catch { /* Stale weak handles are removed from the cache even if native cleanup fails. */ }
                 knownProfileHandles.RemoveAt(i);
                 continue;
             }
@@ -761,8 +823,8 @@ internal static unsafe class VolumeProfilePatcher
         if (initialized)
             return;
 
-        volumeClass = IL2CPP.GetIl2CppClass("Unity.RenderPipelines.Core.Runtime.dll", "UnityEngine.Rendering", "Volume");
-        volumeProfileClass = IL2CPP.GetIl2CppClass("Unity.RenderPipelines.Core.Runtime.dll", "UnityEngine.Rendering", "VolumeProfile");
+        var volumeClass = IL2CPP.GetIl2CppClass("Unity.RenderPipelines.Core.Runtime.dll", "UnityEngine.Rendering", "Volume");
+        var volumeProfileClass = IL2CPP.GetIl2CppClass("Unity.RenderPipelines.Core.Runtime.dll", "UnityEngine.Rendering", "VolumeProfile");
 
         if (volumeClass == IntPtr.Zero)
             throw new MissingMemberException("UnityEngine.Rendering.Volume class was not resolved.");
@@ -897,7 +959,7 @@ internal static unsafe class VolumeProfilePatcher
         value = 0f;
         try
         {
-            var field = FindFieldInHierarchy(IL2CPP.il2cpp_object_get_class(parameter), "m_Value");
+            var field = FindFieldInHierarchy(IL2CPP.il2cpp_object_get_class(parameter), SerializedValueField);
             if (field == IntPtr.Zero)
                 return false;
 
@@ -917,7 +979,7 @@ internal static unsafe class VolumeProfilePatcher
     {
         try
         {
-            var field = FindFieldInHierarchy(IL2CPP.il2cpp_object_get_class(parameter), "m_Value");
+            var field = FindFieldInHierarchy(IL2CPP.il2cpp_object_get_class(parameter), SerializedValueField);
             if (field == IntPtr.Zero)
                 return false;
 
@@ -937,7 +999,7 @@ internal static unsafe class VolumeProfilePatcher
         value = 0;
         try
         {
-            var field = FindFieldInHierarchy(IL2CPP.il2cpp_object_get_class(parameter), "m_Value");
+            var field = FindFieldInHierarchy(IL2CPP.il2cpp_object_get_class(parameter), SerializedValueField);
             if (field == IntPtr.Zero)
                 return false;
 
@@ -957,7 +1019,7 @@ internal static unsafe class VolumeProfilePatcher
     {
         try
         {
-            var field = FindFieldInHierarchy(IL2CPP.il2cpp_object_get_class(parameter), "m_Value");
+            var field = FindFieldInHierarchy(IL2CPP.il2cpp_object_get_class(parameter), SerializedValueField);
             if (field == IntPtr.Zero)
                 return false;
 

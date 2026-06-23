@@ -20,24 +20,38 @@ public sealed class Plugin : BasePlugin
     public const string NAME = "LimbusFramePacingFix";
     public const string VERSION = "0.4.1";
 
-    internal static new ManualLogSource Log = null!;
-    internal static ConfigEntry<bool> Enabled = null!;
-    internal static ConfigEntry<int> TargetFrameRate = null!;
-    internal static ConfigEntry<int> VSyncCount = null!;
-    internal static ConfigEntry<bool> ForceMaximizedWindow = null!;
-    internal static ConfigEntry<bool> RunInBackground = null!;
-    internal static ConfigEntry<bool> AllowDisplayModeChanges = null!;
-    internal static ConfigEntry<bool> ForceOnDemandEveryFrame = null!;
-    internal static ConfigEntry<int> MaxQueuedFrames = null!;
-    internal static ConfigEntry<float> ReapplyIntervalSeconds = null!;
-    internal static ConfigEntry<bool> ApplyNativeUnitySettings = null!;
-    internal static ConfigEntry<bool> PatchGameFrameRateMethods = null!;
-    internal static ConfigEntry<bool> DumpMetadataOnLoad = null!;
+    private static ManualLogSource? log;
+    private static ConfigEntry<bool>? enabled;
+    private static ConfigEntry<int>? targetFrameRate;
+    private static ConfigEntry<int>? vSyncCount;
+    private static ConfigEntry<bool>? forceMaximizedWindow;
+    private static ConfigEntry<bool>? runInBackground;
+    private static ConfigEntry<bool>? allowDisplayModeChanges;
+    private static ConfigEntry<bool>? forceOnDemandEveryFrame;
+    private static ConfigEntry<int>? maxQueuedFrames;
+    private static ConfigEntry<float>? reapplyIntervalSeconds;
+    private static ConfigEntry<bool>? applyNativeUnitySettings;
+    private static ConfigEntry<bool>? patchGameFrameRateMethods;
+    private static ConfigEntry<bool>? dumpMetadataOnLoad;
+
+    internal static new ManualLogSource Log => log ?? throw new InvalidOperationException($"{NAME} logging is not initialized.");
+    internal static ConfigEntry<bool> Enabled => Required(enabled, nameof(Enabled));
+    internal static ConfigEntry<int> TargetFrameRate => Required(targetFrameRate, nameof(TargetFrameRate));
+    internal static ConfigEntry<int> VSyncCount => Required(vSyncCount, nameof(VSyncCount));
+    internal static ConfigEntry<bool> ForceMaximizedWindow => Required(forceMaximizedWindow, nameof(ForceMaximizedWindow));
+    internal static ConfigEntry<bool> RunInBackground => Required(runInBackground, nameof(RunInBackground));
+    internal static ConfigEntry<bool> AllowDisplayModeChanges => Required(allowDisplayModeChanges, nameof(AllowDisplayModeChanges));
+    internal static ConfigEntry<bool> ForceOnDemandEveryFrame => Required(forceOnDemandEveryFrame, nameof(ForceOnDemandEveryFrame));
+    internal static ConfigEntry<int> MaxQueuedFrames => Required(maxQueuedFrames, nameof(MaxQueuedFrames));
+    internal static ConfigEntry<float> ReapplyIntervalSeconds => Required(reapplyIntervalSeconds, nameof(ReapplyIntervalSeconds));
+    internal static ConfigEntry<bool> ApplyNativeUnitySettings => Required(applyNativeUnitySettings, nameof(ApplyNativeUnitySettings));
+    internal static ConfigEntry<bool> PatchGameFrameRateMethods => Required(patchGameFrameRateMethods, nameof(PatchGameFrameRateMethods));
+    internal static ConfigEntry<bool> DumpMetadataOnLoad => Required(dumpMetadataOnLoad, nameof(DumpMetadataOnLoad));
 
     public override void Load()
     {
-        Log = base.Log;
-        BindConfig();
+        InitializeLog(base.Log);
+        BindConfig(Config);
 
         CanvasScalerFramePacingDetour.Install();
         NativeUnitySettings.InstallSetterDetours();
@@ -62,31 +76,41 @@ public sealed class Plugin : BasePlugin
         return true;
     }
 
-    private void BindConfig()
+    private static void InitializeLog(ManualLogSource source)
     {
-        Enabled = Config.Bind("General", "Enabled", true, "Master switch for all frame pacing mitigations.");
-        TargetFrameRate = Config.Bind("Frame pacing", "TargetFrameRate", 240, "Forced Application.targetFrameRate. Use -1 to let Unity use platform default.");
-        VSyncCount = Config.Bind("Frame pacing", "VSyncCount", 0, "Forced QualitySettings.vSyncCount. 0 disables Unity VSync so the explicit FPS cap is used.");
-        ForceOnDemandEveryFrame = Config.Bind("Frame pacing", "ForceOnDemandEveryFrame", true, "Forces OnDemandRendering.renderFrameInterval to 1 so Unity does not intentionally skip renders.");
-        MaxQueuedFrames = Config.Bind("Frame pacing", "MaxQueuedFrames", 1, "Forced QualitySettings.maxQueuedFrames. Use 0 to leave unchanged.");
-        AllowDisplayModeChanges = Config.Bind("Display", "AllowDisplayModeChanges", false, "Opt-in guard for settings that change Unity's display mode or window size. Leave false to preserve the user's selected window mode.");
-        ForceMaximizedWindow = Config.Bind("Display", "ForceMaximizedWindow", false, "When AllowDisplayModeChanges is true, forces Screen.fullScreenMode to FullScreenWindow, Unity's borderless maximized window mode.");
-        RunInBackground = Config.Bind("Display", "RunInBackground", false, "Forced Application.runInBackground value.");
-        ReapplyIntervalSeconds = Config.Bind("Diagnostics", "ReapplyIntervalSeconds", 0.25f, "How often the runtime enforcer checks and reapplies settings.");
-        ApplyNativeUnitySettings = Config.Bind("Diagnostics", "ApplyNativeUnitySettings", true, "Experimental. Applies Unity settings through IL2CPP runtime invocation.");
-        PatchGameFrameRateMethods = Config.Bind("Diagnostics", "PatchGameFrameRateMethods", true, "Hooks Limbus' own frame-rate apply methods so game-side 144 FPS writes are followed by the forced cap.");
-        DumpMetadataOnLoad = Config.Bind("Diagnostics", "DumpMetadataOnLoad", false, "Writes an IL2CPP frame/display metadata scan for reverse engineering. Leave off for normal play.");
+        log = source;
     }
 
-    internal static bool IsEnabled => Enabled != null && Enabled.Value;
-    internal static bool ShouldApplyNativeUnitySettings => IsEnabled && ApplyNativeUnitySettings != null && ApplyNativeUnitySettings.Value;
-    internal static bool ShouldPatchGameFrameRateMethods => IsEnabled && PatchGameFrameRateMethods != null && PatchGameFrameRateMethods.Value;
+    private static void BindConfig(ConfigFile config)
+    {
+        enabled = config.Bind("General", "Enabled", true, "Master switch for all frame pacing mitigations.");
+        targetFrameRate = config.Bind("Frame pacing", "TargetFrameRate", 240, "Forced Application.targetFrameRate. Use -1 to let Unity use platform default.");
+        vSyncCount = config.Bind("Frame pacing", "VSyncCount", 0, "Forced QualitySettings.vSyncCount. 0 disables Unity VSync so the explicit FPS cap is used.");
+        forceOnDemandEveryFrame = config.Bind("Frame pacing", "ForceOnDemandEveryFrame", true, "Forces OnDemandRendering.renderFrameInterval to 1 so Unity does not intentionally skip renders.");
+        maxQueuedFrames = config.Bind("Frame pacing", "MaxQueuedFrames", 1, "Forced QualitySettings.maxQueuedFrames. Use 0 to leave unchanged.");
+        allowDisplayModeChanges = config.Bind("Display", "AllowDisplayModeChanges", false, "Opt-in guard for settings that change Unity's display mode or window size. Leave false to preserve the user's selected window mode.");
+        forceMaximizedWindow = config.Bind("Display", "ForceMaximizedWindow", false, "When AllowDisplayModeChanges is true, forces Screen.fullScreenMode to FullScreenWindow, Unity's borderless maximized window mode.");
+        runInBackground = config.Bind("Display", "RunInBackground", false, "Forced Application.runInBackground value.");
+        reapplyIntervalSeconds = config.Bind("Diagnostics", "ReapplyIntervalSeconds", 0.25f, "How often the runtime enforcer checks and reapplies settings.");
+        applyNativeUnitySettings = config.Bind("Diagnostics", "ApplyNativeUnitySettings", true, "Experimental. Applies Unity settings through IL2CPP runtime invocation.");
+        patchGameFrameRateMethods = config.Bind("Diagnostics", "PatchGameFrameRateMethods", true, "Hooks Limbus' own frame-rate apply methods so game-side 144 FPS writes are followed by the forced cap.");
+        dumpMetadataOnLoad = config.Bind("Diagnostics", "DumpMetadataOnLoad", false, "Writes an IL2CPP frame/display metadata scan for reverse engineering. Leave off for normal play.");
+    }
+
+    internal static bool IsEnabled => enabled != null && enabled.Value;
+    internal static bool ShouldApplyNativeUnitySettings => IsEnabled && applyNativeUnitySettings != null && applyNativeUnitySettings.Value;
+    internal static bool ShouldPatchGameFrameRateMethods => IsEnabled && patchGameFrameRateMethods != null && patchGameFrameRateMethods.Value;
     internal static bool ShouldForceMaximizedWindow =>
         IsEnabled &&
-        AllowDisplayModeChanges != null &&
-        AllowDisplayModeChanges.Value &&
-        ForceMaximizedWindow != null &&
-        ForceMaximizedWindow.Value;
+        allowDisplayModeChanges != null &&
+        allowDisplayModeChanges.Value &&
+        forceMaximizedWindow != null &&
+        forceMaximizedWindow.Value;
+
+    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name)
+    {
+        return entry ?? throw new InvalidOperationException($"{NAME} config entry '{name}' is not initialized.");
+    }
 }
 
 internal static class FramePacingEnforcer
@@ -118,94 +142,87 @@ internal static class FramePacingEnforcer
             var changes = new List<string>();
             NativeUnitySettings.EnsureInitialized();
 
-            var targetFrameRate = Plugin.TargetFrameRate.Value;
-            if (NativeUnitySettings.TrySetTargetFrameRate(targetFrameRate, out var targetFrameRateError))
-            {
-                changes.Add($"targetFrameRate={targetFrameRate}");
-            }
-            else
-            {
-                changes.Add($"targetFrameRate skipped: {targetFrameRateError}");
-            }
-
-            var vSyncCount = Math.Max(0, Plugin.VSyncCount.Value);
-            if (NativeUnitySettings.TrySetVSyncCount(vSyncCount, out var vSyncError))
-            {
-                changes.Add($"vSyncCount={vSyncCount}");
-            }
-            else
-            {
-                changes.Add($"vSyncCount skipped: {vSyncError}");
-            }
-
-            if (Plugin.ForceOnDemandEveryFrame.Value)
-            {
-                if (NativeUnitySettings.TrySetRenderFrameInterval(1, out var renderIntervalError))
-                {
-                    changes.Add("renderFrameInterval=1");
-                }
-                else
-                {
-                    changes.Add($"renderFrameInterval skipped: {renderIntervalError}");
-                }
-            }
-
-            var maxQueuedFrames = Plugin.MaxQueuedFrames.Value;
-            if (maxQueuedFrames > 0)
-            {
-                if (NativeUnitySettings.TrySetMaxQueuedFrames(maxQueuedFrames, out var maxQueuedFramesError))
-                {
-                    changes.Add($"maxQueuedFrames={maxQueuedFrames}");
-                }
-                else
-                {
-                    changes.Add($"maxQueuedFrames skipped: {maxQueuedFramesError}");
-                }
-            }
-
-            var runInBackground = Plugin.RunInBackground.Value;
-            if (NativeUnitySettings.TrySetRunInBackground(runInBackground, out var runInBackgroundError))
-            {
-                changes.Add($"runInBackground={runInBackground}");
-            }
-            else
-            {
-                changes.Add($"runInBackground skipped: {runInBackgroundError}");
-            }
-
-            if (Plugin.ShouldForceMaximizedWindow)
-            {
-                if (NativeUnitySettings.TrySetFullScreenMode(FullScreenWindowMode, out var fullScreenModeError))
-                {
-                    changes.Add("fullScreenMode=FullScreenWindow");
-                }
-                else if (NativeWindow.TryMaximizeMainWindow(out var maximizeError))
-                {
-                    changes.Add("window=Maximized");
-                }
-                else
-                {
-                    changes.Add($"fullScreenMode/window skipped: {fullScreenModeError}; {maximizeError}");
-                }
-            }
-
-            var nextLogCount = FramePacingState.ApplyLogCount + 1;
-            if (forceLog || nextLogCount <= 8 || nextLogCount % 120 == 0)
-            {
-                FramePacingState.ApplyLogCount = nextLogCount;
-                Plugin.Log.LogInfo(
-                    $"Frame pacing apply #{nextLogCount} ({reason}): " +
-                    (changes.Count == 0 ? "no changes" : string.Join(", ", changes)) + ".");
-            }
-            else
-            {
-                FramePacingState.ApplyLogCount = nextLogCount;
-            }
+            ApplyTargetFrameRate(changes);
+            ApplyVSyncCount(changes);
+            ApplyRenderFrameInterval(changes);
+            ApplyMaxQueuedFrames(changes);
+            ApplyRunInBackground(changes);
+            ApplyDisplayMode(changes);
+            LogApply(reason, forceLog, changes);
         }
         catch (Exception ex)
         {
             Plugin.Log.LogWarning($"Frame pacing apply failed during {reason}: {ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    private static void ApplyTargetFrameRate(List<string> changes)
+    {
+        var value = Plugin.TargetFrameRate.Value;
+        AddResult(changes, "targetFrameRate", $"targetFrameRate={value}", NativeUnitySettings.TrySetTargetFrameRate(value, out var error), error);
+    }
+
+    private static void ApplyVSyncCount(List<string> changes)
+    {
+        var value = Math.Max(0, Plugin.VSyncCount.Value);
+        AddResult(changes, "vSyncCount", $"vSyncCount={value}", NativeUnitySettings.TrySetVSyncCount(value, out var error), error);
+    }
+
+    private static void ApplyRenderFrameInterval(List<string> changes)
+    {
+        if (!Plugin.ForceOnDemandEveryFrame.Value)
+            return;
+
+        AddResult(changes, "renderFrameInterval", "renderFrameInterval=1", NativeUnitySettings.TrySetRenderFrameInterval(1, out var error), error);
+    }
+
+    private static void ApplyMaxQueuedFrames(List<string> changes)
+    {
+        var value = Plugin.MaxQueuedFrames.Value;
+        if (value <= 0)
+            return;
+
+        AddResult(changes, "maxQueuedFrames", $"maxQueuedFrames={value}", NativeUnitySettings.TrySetMaxQueuedFrames(value, out var error), error);
+    }
+
+    private static void ApplyRunInBackground(List<string> changes)
+    {
+        var value = Plugin.RunInBackground.Value;
+        AddResult(changes, "runInBackground", $"runInBackground={value}", NativeUnitySettings.TrySetRunInBackground(value, out var error), error);
+    }
+
+    private static void ApplyDisplayMode(List<string> changes)
+    {
+        if (!Plugin.ShouldForceMaximizedWindow)
+            return;
+
+        if (NativeUnitySettings.TrySetFullScreenMode(FullScreenWindowMode, out var fullScreenModeError))
+        {
+            changes.Add("fullScreenMode=FullScreenWindow");
+            return;
+        }
+
+        if (NativeWindow.TryMaximizeMainWindow(out var maximizeError))
+            changes.Add("window=Maximized");
+        else
+            changes.Add($"fullScreenMode/window skipped: {fullScreenModeError}; {maximizeError}");
+    }
+
+    private static void AddResult(List<string> changes, string name, string success, bool applied, string error)
+    {
+        changes.Add(applied ? success : $"{name} skipped: {error}");
+    }
+
+    private static void LogApply(string reason, bool forceLog, List<string> changes)
+    {
+        var nextLogCount = FramePacingState.ApplyLogCount + 1;
+        FramePacingState.ApplyLogCount = nextLogCount;
+        if (!forceLog && nextLogCount > 8 && nextLogCount % 120 != 0)
+            return;
+
+        Plugin.Log.LogInfo(
+            $"Frame pacing apply #{nextLogCount} ({reason}): " +
+            (changes.Count == 0 ? "no changes" : string.Join(", ", changes)) + ".");
     }
 }
 

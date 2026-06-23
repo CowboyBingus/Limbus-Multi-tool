@@ -1,0 +1,19 @@
+/[Script]LoginSceneManager/[Canvas]/[Image]TouchToStart -> Width: -3000
+
+/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Rect]UnitStatusContent -> Anchor X: 900 (Friendly / Ally), Anchor X: -900 (Enemy)
+
+/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Script]TabContentManager -> Anchor X: 1000 (Friendly / Ally), Anchor X: -1000 (Enemy)
+
+/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Image]UnitStatusPanel -> Width: 3625
+
+/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Script]SideButtonList -> Anchor X: 335
+
+/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Trigger]SkillSummaryPanel/[Script]SkillSummaryPanel -> Anchor X: 250 (Enemy)
+
+
+/[Canvas]RatioMainUI/[Rect]PanelRoot/[UIPanel]RecordMemory_MainEvent(Clone)/[Rect]BG -> Scale x,y: 1.25
+
+
+======== Leave alone reference only vvvv =================
+
+/[Script]BattleUIRoot/[Canvas]BattleFrontUI/[Script]UnitInformationController/[Script]UnitInformationController_Renewal/[Canvas]AboveSpine/[Script]UnitStatus (entire status resists)

@@ -14,7 +14,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptRoot = if (![string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+$ScriptRoot = if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
     $PSScriptRoot
 } elseif ($MyInvocation.MyCommand.Path) {
     Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -41,7 +41,7 @@ function Fail([string]$Message) {
 }
 
 function Require-File([string]$Path, [string]$Description) {
-    if (!(Test-Path -LiteralPath $Path)) {
+    if (-not (Test-Path -LiteralPath $Path)) {
         Fail "$Description not found: $Path"
     }
 }
@@ -62,7 +62,7 @@ function Require-GameDir([string]$Path) {
 
 function Get-PluginDir([string]$Path) {
     $dir = Join-Path $Path 'BepInEx\plugins'
-    if (!(Test-Path -LiteralPath $dir)) {
+    if (-not (Test-Path -LiteralPath $dir)) {
         New-Item -ItemType Directory -Path $dir | Out-Null
     }
     return $dir
@@ -89,20 +89,6 @@ function Stop-GameIfRunning([switch]$Required) {
                 Warn $message
             }
         }
-
-        $deadline = (Get-Date).AddSeconds(15)
-        while ((Get-Date) -lt $deadline) {
-            $stillRunning = Get-Process -Name LimbusCompany -ErrorAction SilentlyContinue
-            if (!$stillRunning) {
-                return
-            }
-            Start-Sleep -Milliseconds 500
-        }
-
-        if ($Required) {
-            Fail "LimbusCompany is still running. Close the game manually and run install again."
-        }
-        Warn "LimbusCompany is still running."
     }
 }
 
@@ -131,12 +117,12 @@ function Test-InteropReady([string]$Path) {
         'UnityEngine.UIModule.dll'
     )
 
-    if (!(Test-Path -LiteralPath $interopDir)) {
+    if (-not (Test-Path -LiteralPath $interopDir)) {
         return $false
     }
 
     foreach ($name in $required) {
-        if (!(Test-Path -LiteralPath (Join-Path $interopDir $name))) {
+        if (-not (Test-Path -LiteralPath (Join-Path $interopDir $name))) {
             return $false
         }
     }
@@ -145,7 +131,7 @@ function Test-InteropReady([string]$Path) {
 }
 
 function Get-ConfigValue([string]$Path, [string]$Name) {
-    if (!(Test-Path -LiteralPath $Path)) {
+    if (-not (Test-Path -LiteralPath $Path)) {
         return $null
     }
 
@@ -170,7 +156,7 @@ function Require-ConfigValue([string]$Path, [string]$Name, [string]$Expected) {
 }
 
 function Get-FileSha256([string]$Path) {
-    if (!(Test-Path -LiteralPath $Path)) {
+    if (-not (Test-Path -LiteralPath $Path)) {
         return $null
     }
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToUpperInvariant()
@@ -228,7 +214,7 @@ function Invoke-Reapply([switch]$EnableInteropGeneration) {
 }
 
 function Test-PathChangedSince([string]$Path, [datetime]$StartUtc) {
-    if (!(Test-Path -LiteralPath $Path)) {
+    if (-not (Test-Path -LiteralPath $Path)) {
         return $false
     }
     return ((Get-Item -LiteralPath $Path).LastWriteTimeUtc -ge $StartUtc.AddSeconds(-1))
@@ -236,7 +222,7 @@ function Test-PathChangedSince([string]$Path, [datetime]$StartUtc) {
 
 function Get-DoorstopFatalMessage([long]$StartLength) {
     $logPath = Join-Path $GameDir 'doorstop_proxy.log'
-    if (!(Test-Path -LiteralPath $logPath)) {
+    if (-not (Test-Path -LiteralPath $logPath)) {
         return $null
     }
 
@@ -294,58 +280,65 @@ function Test-BepInExStarted([datetime]$StartUtc) {
 
 function Get-InteropFileCount {
     $interopDir = Join-Path $GameDir 'BepInEx\interop'
-    if (!(Test-Path -LiteralPath $interopDir)) {
+    if (-not (Test-Path -LiteralPath $interopDir)) {
         return 0
     }
     return @((Get-ChildItem -LiteralPath $interopDir -File -ErrorAction SilentlyContinue)).Count
 }
 
-function Start-GameForInteropGeneration {
-    Info "Launching Limbus Company once to generate BepInEx interop assemblies."
-    $startUtc = (Get-Date).ToUniversalTime()
+function Get-DoorstopLogLength {
     $doorstopLog = Join-Path $GameDir 'doorstop_proxy.log'
-    $doorstopStartLength = 0
     if (Test-Path -LiteralPath $doorstopLog) {
-        $doorstopStartLength = (Get-Item -LiteralPath $doorstopLog).Length
+        return (Get-Item -LiteralPath $doorstopLog).Length
     }
-    $process = Start-Process -FilePath (Join-Path $GameDir 'LimbusCompany.exe') -WorkingDirectory $GameDir -PassThru
+
+    return 0
+}
+
+function Fail-IfDoorstopFatal([long]$StartLength, [string]$Phase) {
+    $fatal = Get-DoorstopFatalMessage $StartLength
+    if ($fatal) {
+        Fail "Doorstop failed ${Phase}: $fatal"
+    }
+}
+
+function Test-GameExitedAfterUtc([datetime]$StartUtc, [int]$GraceSeconds) {
+    $running = Get-Process -Name LimbusCompany -ErrorAction SilentlyContinue
+    return (-not $running -and ((Get-Date).ToUniversalTime() - $StartUtc).TotalSeconds -ge $GraceSeconds)
+}
+
+function Test-GameExitedAfter([datetime]$StartTime, [int]$GraceSeconds) {
+    $running = Get-Process -Name LimbusCompany -ErrorAction SilentlyContinue
+    return (-not $running -and ((Get-Date) - $StartTime).TotalSeconds -ge $GraceSeconds)
+}
+
+function Wait-BepInExStartup([datetime]$StartUtc, [long]$DoorstopStartLength) {
     Info "Checking that BepInEx starts."
+    $deadline = (Get-Date).AddSeconds(25)
+    while ((Get-Date) -lt $deadline) {
+        Fail-IfDoorstopFatal $DoorstopStartLength 'before BepInEx started'
 
-    $startupDeadline = (Get-Date).AddSeconds(25)
-    $bepInExStarted = $false
-    while ((Get-Date) -lt $startupDeadline) {
-        $fatal = Get-DoorstopFatalMessage $doorstopStartLength
-        if ($fatal) {
-            Fail "Doorstop failed before BepInEx started: $fatal"
-        }
-
-        if (Test-BepInExStarted $startUtc) {
-            $bepInExStarted = $true
+        if (Test-BepInExStarted $StartUtc) {
             Info "Detected BepInEx startup."
-            break
+            return
         }
 
-        $running = Get-Process -Name LimbusCompany -ErrorAction SilentlyContinue
-        if (!$running -and ((Get-Date).ToUniversalTime() - $startUtc).TotalSeconds -ge 5) {
+        if (Test-GameExitedAfterUtc $StartUtc 5) {
             Fail "LimbusCompany exited before BepInEx started. Check doorstop_proxy.log in the game folder."
         }
 
         Start-Sleep -Milliseconds 500
     }
 
-    if (!$bepInExStarted) {
-        Fail "BepInEx did not start within 25 seconds. Check doorstop_proxy.log in the game folder."
-    }
+    Fail "BepInEx did not start within 25 seconds. Check doorstop_proxy.log in the game folder."
+}
 
+function Wait-InteropGeneration([long]$DoorstopStartLength) {
     Info "Waiting for BepInEx interop generation."
     $deadline = (Get-Date).AddMinutes(3)
-    $lastCount = Get-InteropFileCount
-    $lastProgress = Get-Date
+    $startTime = Get-Date
     while ((Get-Date) -lt $deadline) {
-        $fatal = Get-DoorstopFatalMessage $doorstopStartLength
-        if ($fatal) {
-            Fail "Doorstop failed during interop generation: $fatal"
-        }
+        Fail-IfDoorstopFatal $DoorstopStartLength 'during interop generation'
 
         if (Test-InteropReady $GameDir) {
             Start-Sleep -Seconds 2
@@ -355,14 +348,7 @@ function Start-GameForInteropGeneration {
             }
         }
 
-        $count = Get-InteropFileCount
-        if ($count -ne $lastCount) {
-            $lastCount = $count
-            $lastProgress = Get-Date
-        }
-
-        $running = Get-Process -Name LimbusCompany -ErrorAction SilentlyContinue
-        if (!$running -and ((Get-Date) - $lastProgress).TotalSeconds -ge 5) {
+        if (Test-GameExitedAfter $startTime 5) {
             Fail "LimbusCompany exited before BepInEx interop generation completed."
         }
 
@@ -372,8 +358,16 @@ function Start-GameForInteropGeneration {
     Fail "BepInEx interop generation did not complete within 3 minutes."
 }
 
+function Start-GameForInteropGeneration {
+    Info "Launching Limbus Company once to generate BepInEx interop assemblies."
+    $startUtc = (Get-Date).ToUniversalTime()
+    $doorstopStartLength = Get-DoorstopLogLength
+    Wait-BepInExStartup $startUtc $doorstopStartLength
+    Wait-InteropGeneration $doorstopStartLength
+}
+
 function Assert-InstalledState([string[]]$Selected) {
-    if (!(Test-BepInExInstalled $GameDir)) {
+    if (-not (Test-BepInExInstalled $GameDir)) {
         Fail "Post-install validation failed: BepInEx Unity IL2CPP files are incomplete."
     }
     if ((Get-FileSha256 (Join-Path $PayloadRoot 'native\winhttp.dll')) -ne (Get-FileSha256 (Join-Path $GameDir 'winhttp.dll'))) {
@@ -453,7 +447,7 @@ function Ensure-BepInEx {
         Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    if (!(Test-BepInExInstalled $GameDir)) {
+    if (-not (Test-BepInExInstalled $GameDir)) {
         Fail "BepInEx install did not produce the expected Unity IL2CPP files."
     }
     Info "BepInEx install complete."
@@ -477,7 +471,7 @@ function Install-WinHttpShim {
         return
     }
 
-    if (!(Test-Path -LiteralPath $doorstopDir)) {
+    if (-not (Test-Path -LiteralPath $doorstopDir)) {
         New-Item -ItemType Directory -Path $doorstopDir -Force | Out-Null
     }
 
@@ -620,10 +614,10 @@ function Invoke-Audit {
     )
     $blockedNamePattern = '(?i)(' + (($blockedTerms | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')'
 
-    $matches = Get-ChildItem -LiteralPath $PayloadRoot -Recurse -Force -File |
+    $fileMatches = Get-ChildItem -LiteralPath $PayloadRoot -Recurse -Force -File |
         Where-Object { $_.Name -match $blockedNamePattern }
-    if ($matches) {
-        foreach ($m in $matches) { Warn "Disallowed filename: $($m.FullName)" }
+    if ($fileMatches) {
+        foreach ($m in $fileMatches) { Warn "Disallowed filename: $($m.FullName)" }
         Fail "Payload contains disallowed filenames."
     }
 
@@ -645,7 +639,7 @@ function Invoke-SelfUpdate {
     if ([string]::IsNullOrWhiteSpace($AppDir)) {
         Fail "AppDir is required."
     }
-    if (!(Test-Path -LiteralPath $AppDir)) {
+    if (-not (Test-Path -LiteralPath $AppDir)) {
         Fail "App directory not found: $AppDir"
     }
 
@@ -668,7 +662,7 @@ function Invoke-SelfUpdate {
 
         $sourceDir = $extractDir
         $directExe = Join-Path $sourceDir 'Limbus Multi-tool.exe'
-        if (!(Test-Path -LiteralPath $directExe)) {
+        if (-not (Test-Path -LiteralPath $directExe)) {
             $nested = Get-ChildItem -LiteralPath $extractDir -Directory |
                 Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'Limbus Multi-tool.exe') } |
                 Select-Object -First 1
@@ -693,12 +687,12 @@ function Invoke-SelfUpdate {
         Info "Installing update into $AppDir."
         Copy-Item -Path (Join-Path $sourceDir '*') -Destination $AppDir -Recurse -Force
 
-        if (![string]::IsNullOrWhiteSpace($Version)) {
+        if (-not [string]::IsNullOrWhiteSpace($Version)) {
             Set-Content -LiteralPath (Join-Path $AppDir '_internal\app_version.txt') -Value $Version -Encoding UTF8
         }
 
         $exe = Join-Path $AppDir 'Limbus Multi-tool.exe'
-        if (!$NoRelaunch -and (Test-Path -LiteralPath $exe)) {
+        if (-not $NoRelaunch -and (Test-Path -LiteralPath $exe)) {
             Info "Relaunching updated app."
             Start-Process -FilePath $exe -WorkingDirectory $AppDir
         }

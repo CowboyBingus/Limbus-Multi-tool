@@ -39,6 +39,7 @@ winhttp.dll
 *.reapply-runtime-invoke.bak
 
 # Logs
+issues/
 *.log
 doorstop_proxy.log
 doorstop.log

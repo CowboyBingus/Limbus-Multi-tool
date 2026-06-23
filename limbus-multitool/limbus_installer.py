@@ -37,7 +37,9 @@ except ModuleNotFoundError as exc:
 
 APP_NAME = "Limbus Multi-tool"
 ORG_NAME = "LimbusModTools"
+UPDATE_LABEL = "Check for Updates"
 DEFAULT_VERSION = "0.0.0-dev"
+DOT_NET_VERSION = "net6.0"
 RELEASES_URL = "https://github.com/CowboyBingus/Limbus-Multi-tool/releases"
 LATEST_RELEASE_API = "https://api.github.com/repos/CowboyBingus/Limbus-Multi-tool/releases/latest"
 UPDATE_ASSET_PATTERN = re.compile(r"^Limbus-Multi-tool-.+-win-x64\.zip$", re.IGNORECASE)
@@ -65,12 +67,12 @@ REQUIRED_PAYLOAD_FILES = (
     ("bin", "Release", "LimbusFramePacingFix.dll"),
     ("bin", "Release", "LimbusHdrBalanceFix.dll"),
     ("bin", "Release", "LimbusRuntimeUIInspector.dll"),
-    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.exe"),
-    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.dll"),
-    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.runtimeconfig.json"),
-    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "PatchLibCpp.deps.json"),
-    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "Mono.Cecil.dll"),
-    ("tools", "patch-libcpp", "bin", "Release", "net6.0", "Mono.Cecil.Rocks.dll"),
+    ("tools", "patch-libcpp", "bin", "Release", DOT_NET_VERSION, "PatchLibCpp.exe"),
+    ("tools", "patch-libcpp", "bin", "Release", DOT_NET_VERSION, "PatchLibCpp.dll"),
+    ("tools", "patch-libcpp", "bin", "Release", DOT_NET_VERSION, "PatchLibCpp.runtimeconfig.json"),
+    ("tools", "patch-libcpp", "bin", "Release", DOT_NET_VERSION, "PatchLibCpp.deps.json"),
+    ("tools", "patch-libcpp", "bin", "Release", DOT_NET_VERSION, "Mono.Cecil.dll"),
+    ("tools", "patch-libcpp", "bin", "Release", DOT_NET_VERSION, "Mono.Cecil.Rocks.dll"),
 )
 
 
@@ -256,19 +258,14 @@ class UpdateCheckWorker(QThread):
 
             assets = release.get("assets") or []
             selected_asset: dict[str, object] | None = None
-            for asset in assets:
-                name = str(asset.get("name") or "")
-                if UPDATE_ASSET_PATTERN.match(name):
-                    selected_asset = asset
-                    break
-            if selected_asset is None:
-                for asset in assets:
-                    name = str(asset.get("name") or "")
-                    if name.lower().endswith(".zip"):
-                        selected_asset = asset
-                        break
             if selected_asset is None:
                 raise RuntimeError("Latest release does not have a downloadable zip asset.")
+            
+            for asset in assets:
+                name = str(asset.get("name") or "")
+                if UPDATE_ASSET_PATTERN.match(name) or name.lower().endswith(".zip"):
+                    selected_asset=asset
+                    break
 
             asset_url = str(selected_asset.get("browser_download_url") or "")
             asset_name = str(selected_asset.get("name") or "release asset")
@@ -418,7 +415,7 @@ class MainWindow(QMainWindow):
         button_row = QHBoxLayout()
         self.install_btn = QPushButton("Install / Reapply Selected")
         self.launch_btn = QPushButton("Launch Game")
-        self.update_btn = QPushButton("Check for Updates")
+        self.update_btn = QPushButton(UPDATE_LABEL)
 
         self.install_btn.clicked.connect(lambda: self.run_action("install", needs_game=True))
         self.launch_btn.clicked.connect(lambda: self.run_action("launch", needs_game=True))
@@ -487,50 +484,57 @@ class MainWindow(QMainWindow):
 
     def refresh_status(self) -> None:
         game_dir = self.selected_game_dir()
+        game_ok = self.update_game_status(game_dir)
+        self.update_bepinex_status(game_dir, game_ok)
+        self.update_payload_status()
+        self.update_plugin_status(game_dir)
+
+    def update_game_status(self, game_dir: Path | None) -> bool:
         if game_dir and is_game_dir(str(game_dir)):
             self.game_card.set_value(str(game_dir), True)
             self.settings.setValue("gameDir", str(game_dir))
-        else:
-            self.game_card.set_value("Select the folder containing LimbusCompany.exe", False)
+            return True
 
-        game_ok = game_dir is not None and is_game_dir(str(game_dir))
-        bepinex_missing = []
-        if game_ok:
-            bepinex_missing = [Path(*parts) for parts in REQUIRED_BEPINEX_FILES if not (game_dir / Path(*parts)).exists()]
+        self.game_card.set_value("Select the folder containing LimbusCompany.exe", False)
+        return False
 
-        if game_ok and not bepinex_missing:
-            self.bepin_card.set_value("BepInEx Unity IL2CPP present", True)
-        elif game_ok:
-            self.bepin_card.set_value("Incomplete; will be repaired during install", None)
-        else:
+    def update_bepinex_status(self, game_dir: Path | None, game_ok: bool) -> None:
+        if not game_ok or game_dir is None:
             self.bepin_card.set_value("Select a game folder", None)
+            return
 
+        missing = [Path(*parts) for parts in REQUIRED_BEPINEX_FILES if not (game_dir / Path(*parts)).exists()]
+        if not missing:
+            self.bepin_card.set_value("BepInEx Unity IL2CPP present", True)
+        else:
+            self.bepin_card.set_value("Incomplete; will be repaired during install", None)
+
+    def update_payload_status(self) -> None:
         payload = payload_root()
         missing_payload = [Path(*parts) for parts in REQUIRED_PAYLOAD_FILES if not (payload / Path(*parts)).exists()]
         payload_ok = not missing_payload
         payload_text = "Ready" if payload_ok else f"Missing {len(missing_payload)} file(s): {missing_payload[0]}"
         self.payload_card.set_value(payload_text, payload_ok)
 
-        if game_dir:
-            plugin_dir = game_dir / "BepInEx" / "plugins"
-            plugin_files = {
-                "canvas": "LimbusCanvasFix.dll",
-                "resize": "LimbusWindowResizeFix.dll",
-                "framepacing": "LimbusFramePacingFix.dll",
-                "hdrbalance": "LimbusHdrBalanceFix.dll",
-                "inspector": "LimbusRuntimeUIInspector.dll",
-            }
-            expected = [plugin_files[name] for name in self.selected_plugins()]
-            installed = [(plugin_dir / name).exists() for name in expected]
-            installed_count = sum(1 for present in installed if present)
-            if expected and installed_count == len(installed):
-                self.plugin_card.set_value("Selected plugins installed", True)
-            elif installed_count:
-                self.plugin_card.set_value(f"{installed_count} of {len(expected)} selected plugins installed", False)
-            else:
-                self.plugin_card.set_value("Plugins not installed", None)
-        else:
+    def update_plugin_status(self, game_dir: Path | None) -> None:
+        if game_dir is None:
             self.plugin_card.set_value("Select a game folder", None)
+            return
+
+        plugin_dir = game_dir / "BepInEx" / "plugins"
+        plugin_files = {
+            "canvas": "LimbusCanvasFix.dll",
+            "resize": "LimbusWindowResizeFix.dll",
+            "framepacing": "LimbusFramePacingFix.dll",
+            "hdrbalance": "LimbusHdrBalanceFix.dll",
+            "inspector": "LimbusRuntimeUIInspector.dll",
+        }
+        expected = [plugin_files[name] for name in self.selected_plugins()]
+        installed_count = sum(1 for name in expected if (plugin_dir / name).exists())
+        if installed_count == len(expected):
+            self.plugin_card.set_value("Selected plugins installed", True)
+        else:
+            self.plugin_card.set_value(f"{installed_count} of {len(expected)} selected plugins installed", False)
 
     def run_action(self, action: str, needs_game: bool) -> None:
         if self.worker is not None and self.worker.isRunning():
@@ -584,10 +588,8 @@ class MainWindow(QMainWindow):
         if not isinstance(result, dict) or not result.get("ok"):
             error = str(result.get("error") if isinstance(result, dict) else "Unknown update check error.")
             self.available_update = None
-            self.update_btn.setText("Check for Updates")
+            self.update_btn.setText(UPDATE_LABEL)
             self.update_card.set_value(f"Update check failed: {error}", False)
-            if self.update_check_manual:
-                QMessageBox.warning(self, "Update check failed", error)
             return
 
         if result.get("available"):
@@ -608,14 +610,15 @@ class MainWindow(QMainWindow):
                 )
                 if response == QMessageBox.StandardButton.Yes:
                     self.confirm_and_start_update(result, ask=False)
+                    return
             elif self.update_check_manual:
                 self.confirm_and_start_update(result)
-        else:
-            self.available_update = None
-            self.update_btn.setText("Check for Updates")
-            self.update_card.set_value(f"Up to date: {result['current']}", True)
-            if self.update_check_manual:
-                QMessageBox.information(self, "No update available", f"{APP_NAME} is up to date.")
+                return
+        self.available_update = None
+        self.update_btn.setText(UPDATE_LABEL)
+        self.update_card.set_value(f"Up to date: {result['current']}", True)
+        if self.update_check_manual:
+            QMessageBox.information(self, "No update available", f"{APP_NAME} is up to date.")
 
     def confirm_and_start_update(self, update: dict[str, object], ask: bool = True) -> None:
         app_dir = install_root()

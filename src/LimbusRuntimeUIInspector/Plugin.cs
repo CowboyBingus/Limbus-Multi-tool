@@ -26,21 +26,24 @@ public sealed class Plugin : BasePlugin
     public const string NAME = "LimbusRuntimeUIInspector";
     public const string VERSION = "0.3.0";
 
-    internal static new ManualLogSource Log = null!;
-    internal static ConfigEntry<bool> Enabled = null!;
-    internal static ConfigEntry<int> Port = null!;
-    internal static ConfigEntry<int> MaxResults = null!;
-    internal static ConfigEntry<int> RequestTimeoutMilliseconds = null!;
-    internal static ConfigEntry<bool> DebugLogging = null!;
+    private static ManualLogSource? log;
+    private static ConfigEntry<bool>? enabled;
+    private static ConfigEntry<int>? port;
+    private static ConfigEntry<int>? maxResults;
+    private static ConfigEntry<int>? requestTimeoutMilliseconds;
+    private static ConfigEntry<bool>? debugLogging;
+
+    internal static new ManualLogSource Log => log ?? throw new InvalidOperationException($"{NAME} logging is not initialized.");
+    internal static ConfigEntry<bool> Enabled => Required(enabled, nameof(Enabled));
+    internal static ConfigEntry<int> Port => Required(port, nameof(Port));
+    internal static ConfigEntry<int> MaxResults => Required(maxResults, nameof(MaxResults));
+    internal static ConfigEntry<int> RequestTimeoutMilliseconds => Required(requestTimeoutMilliseconds, nameof(RequestTimeoutMilliseconds));
+    internal static ConfigEntry<bool> DebugLogging => Required(debugLogging, nameof(DebugLogging));
 
     public override void Load()
     {
-        Log = base.Log;
-        Enabled = Config.Bind("General", "Enabled", true, "Starts the local runtime UI inspector server.");
-        Port = Config.Bind("Server", "Port", 43129, "Localhost HTTP port for the inspector browser UI.");
-        MaxResults = Config.Bind("Inspector", "MaxResults", 5000, "Maximum live element rows returned per scan.");
-        RequestTimeoutMilliseconds = Config.Bind("Inspector", "RequestTimeoutMilliseconds", 2000, "Reserved for future async inspector operations.");
-        DebugLogging = Config.Bind("Diagnostics", "DebugLogging", true, "Writes detailed inspector server and scan/edit job lifecycle logs.");
+        InitializeLog(base.Log);
+        BindConfig(Config);
 
         Debug("Plugin.Load begin.");
         if (Enabled.Value)
@@ -66,16 +69,45 @@ public sealed class Plugin : BasePlugin
 
     internal static void Debug(string message)
     {
-        if (DebugLogging != null && DebugLogging.Value)
+        if (debugLogging != null && debugLogging.Value)
             Log.LogInfo($"[debug] {message}");
     }
+
+    private static void InitializeLog(ManualLogSource source)
+    {
+        log = source;
+    }
+
+    private static void BindConfig(ConfigFile config)
+    {
+        enabled = config.Bind("General", "Enabled", true, "Starts the local runtime UI inspector server.");
+        port = config.Bind("Server", "Port", 43129, "Localhost HTTP port for the inspector browser UI.");
+        maxResults = config.Bind("Inspector", "MaxResults", 5000, "Maximum live element rows returned per scan.");
+        requestTimeoutMilliseconds = config.Bind("Inspector", "RequestTimeoutMilliseconds", 2000, "Reserved for future async inspector operations.");
+        debugLogging = config.Bind("Diagnostics", "DebugLogging", true, "Writes detailed inspector server and scan/edit job lifecycle logs.");
+    }
+
+    private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name)
+    {
+        return entry ?? throw new InvalidOperationException($"{NAME} config entry '{name}' is not initialized.");
+    }
+}
+
+internal static class ContentTypes
+{
+    public const string Json = "application/json";
+}
+
+internal static class UnityInteropNames
+{
+    public const string CoreModule = "UnityEngine.CoreModule.dll";
+    public const string Namespace = "UnityEngine";
 }
 
 internal static class InspectorServer
 {
     private static readonly object sync = new();
     private static TcpListener? listener;
-    private static Thread? thread;
     private static volatile bool running;
     private static int nextRequestId;
 
@@ -90,7 +122,7 @@ internal static class InspectorServer
             listener = new TcpListener(IPAddress.Loopback, port);
             listener.Start();
             running = true;
-            thread = new Thread(AcceptLoop)
+            var thread = new Thread(AcceptLoop)
             {
                 IsBackground = true,
                 Name = "LimbusRuntimeUIInspectorServer"
@@ -105,7 +137,7 @@ internal static class InspectorServer
         lock (sync)
         {
             running = false;
-            try { listener?.Stop(); } catch { }
+            try { listener?.Stop(); } catch { /* Stop is best-effort when the listener is already disposed. */ }
             listener = null;
             Plugin.Debug("Inspector server stopped.");
         }
@@ -121,9 +153,13 @@ internal static class InspectorServer
                 _ = ThreadPool.QueueUserWorkItem(_ => HandleClient(client));
             }
             catch (SocketException)
+                when (running)
             {
-                if (running)
-                    Plugin.Log.LogWarning("Inspector server socket stopped unexpectedly.");
+                Plugin.Log.LogWarning("Inspector server socket stopped unexpectedly.");
+            }
+            catch (SocketException)
+            {
+                return;
             }
             catch (ObjectDisposedException)
             {
@@ -152,81 +188,130 @@ internal static class InspectorServer
 
                 var requestId = Interlocked.Increment(ref nextRequestId);
                 Plugin.Debug($"HTTP {requestId} {request.Method} {request.Path} begin.");
-                if (request.Method == "GET" && request.Path == "/")
-                {
-                    WriteResponse(stream, 200, "text/html; charset=utf-8", InspectorPage.Html);
-                    Plugin.Debug($"HTTP {requestId} {request.Path} served page.");
-                    return;
-                }
-
-                if (request.Method == "GET" && request.Path == "/api/scan")
-                {
-                    var filter = request.Query.TryGetValue("filter", out var value) ? value : string.Empty;
-                    var includeInactive = request.Query.TryGetValue("includeInactive", out var inactive) && inactive == "1";
-                    var includeTransforms = !request.Query.TryGetValue("includeTransforms", out var transforms) || transforms == "1";
-                    var maxResults = Math.Max(1, Plugin.MaxResults.Value);
-                    if (request.Query.TryGetValue("maxResults", out var rawMaxResults) &&
-                        int.TryParse(rawMaxResults, NumberStyles.Integer, CultureInfo.InvariantCulture, out var requestedMaxResults))
-                    {
-                        maxResults = Math.Clamp(requestedMaxResults, 1, 20000);
-                    }
-
-                    var job = InspectorJobs.QueueScan(filter, includeInactive, includeTransforms, maxResults);
-                    WriteResponse(stream, 200, "application/json", JsonSerializer.Serialize(new ApiResponse<JobSnapshot>(true, job, null), JsonOptions.Default));
-                    Plugin.Debug($"HTTP {requestId} queued scan job {job.JobId}.");
-                    return;
-                }
-
-                if (request.Method == "GET" && request.Path == "/api/job")
-                {
-                    if (!request.Query.TryGetValue("id", out var rawId) || !int.TryParse(rawId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var jobId))
-                    {
-                        WriteResponse(stream, 400, "application/json", "{\"ok\":false,\"error\":\"Missing job id.\"}");
-                        return;
-                    }
-
-                    var snapshot = InspectorJobs.Get(jobId);
-                    if (snapshot == null)
-                    {
-                        WriteResponse(stream, 404, "application/json", "{\"ok\":false,\"error\":\"Job not found.\"}");
-                        return;
-                    }
-
-                    WriteResponse(stream, 200, "application/json", JsonSerializer.Serialize(new ApiResponse<JobSnapshot>(true, snapshot, null), JsonOptions.Default));
-                    Plugin.Debug($"HTTP {requestId} returned job {jobId} state={snapshot.State}.");
-                    return;
-                }
-
-                if (request.Method == "POST" && request.Path == "/api/edit")
-                {
-                    var edit = JsonSerializer.Deserialize<EditRequest>(request.Body, JsonOptions.Default);
-                    if (edit == null || edit.Id == 0)
-                    {
-                        WriteResponse(stream, 400, "application/json", "{\"ok\":false,\"error\":\"Missing element id.\"}");
-                        return;
-                    }
-
-                    var job = InspectorJobs.QueueEdit(edit);
-                    WriteResponse(stream, 200, "application/json", JsonSerializer.Serialize(new ApiResponse<JobSnapshot>(true, job, null), JsonOptions.Default));
-                    Plugin.Debug($"HTTP {requestId} queued edit job {job.JobId} for id={edit.Id}.");
-                    return;
-                }
-
-                if (request.Method == "GET" && request.Path == "/api/status")
-                {
-                    WriteResponse(stream, 200, "application/json", "{\"ok\":true,\"name\":\"LimbusRuntimeUIInspector\"}");
-                    Plugin.Debug($"HTTP {requestId} status ok.");
-                    return;
-                }
-
-                WriteResponse(stream, 404, "application/json", "{\"ok\":false,\"error\":\"Not found.\"}");
+                HandleRequest(stream, request, requestId);
             }
             catch (Exception ex)
             {
                 Plugin.Log.LogWarning($"Inspector request failed: {ex}");
-                WriteResponse(stream, 500, "application/json", JsonSerializer.Serialize(new ApiResponse<object>(false, null, ex.Message), JsonOptions.Default));
+                WriteResponse(stream, 500, ContentTypes.Json, JsonSerializer.Serialize(new ApiResponse<object>(false, null, ex.Message), JsonOptions.Default));
             }
         }
+    }
+
+    private static void HandleRequest(Stream stream, HttpRequest request, int requestId)
+    {
+        if (TryHandlePage(stream, request, requestId))
+            return;
+        if (TryHandleScan(stream, request, requestId))
+            return;
+        if (TryHandleJob(stream, request, requestId))
+            return;
+        if (TryHandleEdit(stream, request, requestId))
+            return;
+        if (TryHandleStatus(stream, request, requestId))
+            return;
+
+        WriteResponse(stream, 404, ContentTypes.Json, "{\"ok\":false,\"error\":\"Not found.\"}");
+    }
+
+    private static bool TryHandlePage(Stream stream, HttpRequest request, int requestId)
+    {
+        if (request.Method != "GET" || request.Path != "/")
+            return false;
+
+        WriteResponse(stream, 200, "text/html; charset=utf-8", InspectorPage.Html);
+        Plugin.Debug($"HTTP {requestId} {request.Path} served page.");
+        return true;
+    }
+
+    private static bool TryHandleScan(Stream stream, HttpRequest request, int requestId)
+    {
+        if (request.Method != "GET" || request.Path != "/api/scan")
+            return false;
+
+        var filter = request.Query.TryGetValue("filter", out var value) ? value : string.Empty;
+        var includeInactive = request.Query.TryGetValue("includeInactive", out var inactive) && inactive == "1";
+        var includeTransforms = !request.Query.TryGetValue("includeTransforms", out var transforms) || transforms == "1";
+        var maxResults = GetRequestedMaxResults(request);
+        var job = InspectorJobs.QueueScan(filter, includeInactive, includeTransforms, maxResults);
+        WriteJson(stream, 200, new ApiResponse<JobSnapshot>(true, job, null));
+        Plugin.Debug($"HTTP {requestId} queued scan job {job.JobId}.");
+        return true;
+    }
+
+    private static bool TryHandleJob(Stream stream, HttpRequest request, int requestId)
+    {
+        if (request.Method != "GET" || request.Path != "/api/job")
+            return false;
+
+        if (!TryGetJobId(request, out var jobId))
+        {
+            WriteResponse(stream, 400, ContentTypes.Json, "{\"ok\":false,\"error\":\"Missing job id.\"}");
+            return true;
+        }
+
+        var snapshot = InspectorJobs.Get(jobId);
+        if (snapshot == null)
+        {
+            WriteResponse(stream, 404, ContentTypes.Json, "{\"ok\":false,\"error\":\"Job not found.\"}");
+            return true;
+        }
+
+        WriteJson(stream, 200, new ApiResponse<JobSnapshot>(true, snapshot, null));
+        Plugin.Debug($"HTTP {requestId} returned job {jobId} state={snapshot.State}.");
+        return true;
+    }
+
+    private static bool TryHandleEdit(Stream stream, HttpRequest request, int requestId)
+    {
+        if (request.Method != "POST" || request.Path != "/api/edit")
+            return false;
+
+        var edit = JsonSerializer.Deserialize<EditRequest>(request.Body, JsonOptions.Default);
+        if (edit == null || edit.Id == 0)
+        {
+            WriteResponse(stream, 400, ContentTypes.Json, "{\"ok\":false,\"error\":\"Missing element id.\"}");
+            return true;
+        }
+
+        var job = InspectorJobs.QueueEdit(edit);
+        WriteJson(stream, 200, new ApiResponse<JobSnapshot>(true, job, null));
+        Plugin.Debug($"HTTP {requestId} queued edit job {job.JobId} for id={edit.Id}.");
+        return true;
+    }
+
+    private static bool TryHandleStatus(Stream stream, HttpRequest request, int requestId)
+    {
+        if (request.Method != "GET" || request.Path != "/api/status")
+            return false;
+
+        WriteResponse(stream, 200, ContentTypes.Json, "{\"ok\":true,\"name\":\"LimbusRuntimeUIInspector\"}");
+        Plugin.Debug($"HTTP {requestId} status ok.");
+        return true;
+    }
+
+    private static int GetRequestedMaxResults(HttpRequest request)
+    {
+        var maxResults = Math.Max(1, Plugin.MaxResults.Value);
+        if (request.Query.TryGetValue("maxResults", out var rawMaxResults) &&
+            int.TryParse(rawMaxResults, NumberStyles.Integer, CultureInfo.InvariantCulture, out var requestedMaxResults))
+        {
+            return Math.Clamp(requestedMaxResults, 1, 20000);
+        }
+
+        return maxResults;
+    }
+
+    private static bool TryGetJobId(HttpRequest request, out int jobId)
+    {
+        jobId = 0;
+        return request.Query.TryGetValue("id", out var rawId) &&
+               int.TryParse(rawId, NumberStyles.Integer, CultureInfo.InvariantCulture, out jobId);
+    }
+
+    private static void WriteJson<T>(Stream stream, int status, T payload)
+    {
+        WriteResponse(stream, status, ContentTypes.Json, JsonSerializer.Serialize(payload, JsonOptions.Default));
     }
 
     private static void WriteResponse(Stream stream, int status, string contentType, string body)
@@ -273,7 +358,7 @@ internal static class UnityPumpDetour
         try
         {
             Plugin.Debug("Installing on-demand Canvas.SendWillRenderCanvases pump.");
-            var canvasClass = IL2CPP.GetIl2CppClass("UnityEngine.UIModule.dll", "UnityEngine", "Canvas");
+            var canvasClass = IL2CPP.GetIl2CppClass("UnityEngine.UIModule.dll", UnityInteropNames.Namespace, "Canvas");
             if (canvasClass == IntPtr.Zero)
             {
                 Plugin.Log.LogWarning("Runtime UI inspector pump install failed: UnityEngine.Canvas class was not resolved.");
@@ -443,7 +528,7 @@ internal static class RectTransformRootObserveDetour
         try
         {
             Plugin.Debug("Installing RectTransform relayout root observer.");
-            var rectClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform");
+            var rectClass = IL2CPP.GetIl2CppClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "RectTransform");
             if (rectClass == IntPtr.Zero)
             {
                 Plugin.Log.LogWarning("RectTransform root observer install failed: RectTransform class was not resolved.");
@@ -521,7 +606,7 @@ internal static class GameObjectRootObserveDetour
         try
         {
             Plugin.Debug("Installing GameObject.SetActive root observer.");
-            var gameObjectClass = IL2CPP.GetIl2CppClass("UnityEngine.CoreModule.dll", "UnityEngine", "GameObject");
+            var gameObjectClass = IL2CPP.GetIl2CppClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "GameObject");
             if (gameObjectClass == IntPtr.Zero)
             {
                 Plugin.Log.LogWarning("GameObject root observer install failed: GameObject class was not resolved.");
@@ -972,9 +1057,12 @@ internal sealed class HttpRequest
             ParseQuery(target[(queryIndex + 1)..], request.Query);
 
         var contentLength = 0;
-        string? line;
-        while (!string.IsNullOrEmpty(line = reader.ReadLine()))
+        while (true)
         {
+            var line = reader.ReadLine();
+            if (string.IsNullOrEmpty(line))
+                break;
+
             var colon = line.IndexOf(':');
             if (colon <= 0)
                 continue;
@@ -1022,12 +1110,7 @@ internal static unsafe class UnityUiRuntime
     private const int MaxTraversalNodes = 100000;
 
     private static bool initialized;
-    private static IntPtr objectClass;
-    private static IntPtr componentClass;
-    private static IntPtr gameObjectClass;
-    private static IntPtr transformClass;
     private static IntPtr rectTransformClass;
-    private static IntPtr canvasClass;
 
     private static IntPtr objectGetName;
     private static IntPtr objectGetInstanceId;
@@ -1095,7 +1178,6 @@ internal static unsafe class UnityUiRuntime
 
         var roots = CanvasRootRegistry.SnapshotRoots();
         Plugin.Log.LogInfo($"Inspector scan: live hierarchy traversal begin roots={roots.Count}, includeInactive={includeInactive}, includeTransforms={includeTransforms}, maxResults={maxResults}, filter='{filter ?? ""}'.");
-
         if (roots.Count == 0)
         {
             Plugin.Log.LogWarning("Inspector scan: no UI roots have been observed yet. Let the game reach an active UI screen, then scan again.");
@@ -1103,74 +1185,100 @@ internal static unsafe class UnityUiRuntime
         }
 
         ForceUpdateCanvasesForInspector();
+        var state = new ScanTraversalState(filter, includeInactive, includeTransforms, maxResults);
+        PushRoots(roots, state);
+        TraverseObservedRoots(state);
+        SortCandidates(state.Candidates);
 
-        var candidates = new List<ScannedUiElement>(Math.Min(Math.Max(1, maxResults), 256));
-        var visitedTransforms = new HashSet<IntPtr>();
-        var seenElements = new HashSet<int>();
-        var stack = new Stack<(IntPtr Transform, int Depth)>();
-        var visitedCount = 0;
-        var readFailureCount = 0;
-        var filterText = string.IsNullOrWhiteSpace(filter) ? null : filter.Trim();
-        var transformOnlyCount = 0;
+        var returnedCount = Math.Min(Math.Max(1, maxResults), state.Candidates.Count);
+        var returned = new List<ScannedUiElement>(returnedCount);
+        for (var i = 0; i < returnedCount; i++)
+            returned.Add(state.Candidates[i]);
 
+        var truncated = state.Stack.Count > 0 && state.VisitedCount >= MaxTraversalNodes;
+        Plugin.Log.LogInfo($"Inspector scan: live hierarchy traversal complete roots={roots.Count}, visited={state.VisitedCount}, matched={state.Candidates.Count}, returned={returned.Count}, transformOnly={state.TransformOnlyCount}, truncated={truncated}, readFailures={state.ReadFailureCount}, elapsedMs={stopwatch.ElapsedMilliseconds}.");
+        return new ScanResult(roots.Count, state.VisitedCount, state.Candidates.Count, state.TransformOnlyCount, state.ReadFailureCount, truncated, returned);
+    }
+
+    private static void PushRoots(IReadOnlyList<IntPtr> roots, ScanTraversalState state)
+    {
         for (var i = roots.Count - 1; i >= 0; i--)
         {
             if (roots[i] != IntPtr.Zero)
-                stack.Push((roots[i], 0));
+                state.Stack.Push((roots[i], 0));
         }
+    }
 
-        while (stack.Count > 0 && visitedCount < MaxTraversalNodes)
+    private static void TraverseObservedRoots(ScanTraversalState state)
+    {
+        while (state.Stack.Count > 0 && state.VisitedCount < MaxTraversalNodes)
         {
-            var (transform, depth) = stack.Pop();
-            if (transform == IntPtr.Zero || !visitedTransforms.Add(transform))
+            var (transform, depth) = state.Stack.Pop();
+            if (!MarkVisited(transform, state))
                 continue;
 
-            visitedCount++;
-            if (depth < 64)
-            {
-                var childrenPushed = PushChildren(transform, depth, stack);
-                if (!childrenPushed && depth == 0)
-                {
-                    CanvasRootRegistry.ForgetRoot(transform, "root child traversal failed");
-                    continue;
-                }
-            }
-
-            var isRectTransform = IsRectTransformObject(transform);
-            if (!isRectTransform && !includeTransforms)
+            state.VisitedCount++;
+            if (!QueueChildrenForScan(transform, depth, state))
                 continue;
 
-            UiElement? item;
-            try
-            {
-                item = isRectTransform
-                    ? TryReadRectElement(transform, includeInactive)
-                    : TryReadTransformElement(transform, includeInactive);
-            }
-            catch (Exception ex)
-            {
-                readFailureCount++;
-                if (depth == 0)
-                    CanvasRootRegistry.ForgetRoot(transform, "root read failed");
-                if (readFailureCount <= 12)
-                    Plugin.Debug($"Inspector scan: failed to read transform 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
-                continue;
-            }
-
-            if (item == null)
-                continue;
-
-            if (!MatchesFilter(item, filterText))
-                continue;
-
-            if (!seenElements.Add(item.Id))
-                continue;
-
-            candidates.Add(new ScannedUiElement(item, transform));
-            if (!isRectTransform)
-                transformOnlyCount++;
+            AddScanCandidate(transform, depth, state);
         }
+    }
 
+    private static bool MarkVisited(IntPtr transform, ScanTraversalState state)
+    {
+        return transform != IntPtr.Zero && state.VisitedTransforms.Add(transform);
+    }
+
+    private static bool QueueChildrenForScan(IntPtr transform, int depth, ScanTraversalState state)
+    {
+        if (depth >= 64)
+            return true;
+
+        var childrenPushed = PushChildren(transform, depth, state.Stack);
+        if (childrenPushed || depth != 0)
+            return true;
+
+        CanvasRootRegistry.ForgetRoot(transform, "root child traversal failed");
+        return false;
+    }
+
+    private static void AddScanCandidate(IntPtr transform, int depth, ScanTraversalState state)
+    {
+        var isRectTransform = IsRectTransformObject(transform);
+        if (!isRectTransform && !state.IncludeTransforms)
+            return;
+
+        var item = TryReadScanItem(transform, depth, isRectTransform, state);
+        if (item == null || !MatchesFilter(item, state.FilterText) || !state.SeenElements.Add(item.Id))
+            return;
+
+        state.Candidates.Add(new ScannedUiElement(item, transform));
+        if (!isRectTransform)
+            state.TransformOnlyCount++;
+    }
+
+    private static UiElement? TryReadScanItem(IntPtr transform, int depth, bool isRectTransform, ScanTraversalState state)
+    {
+        try
+        {
+            return isRectTransform
+                ? TryReadRectElement(transform, state.IncludeInactive)
+                : TryReadTransformElement(transform, state.IncludeInactive);
+        }
+        catch (Exception ex)
+        {
+            state.ReadFailureCount++;
+            if (depth == 0)
+                CanvasRootRegistry.ForgetRoot(transform, "root read failed");
+            if (state.ReadFailureCount <= 12)
+                Plugin.Debug($"Inspector scan: failed to read transform 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static void SortCandidates(List<ScannedUiElement> candidates)
+    {
         candidates.Sort((left, right) =>
         {
             var activeCompare = right.Element.ActiveInHierarchy.CompareTo(left.Element.ActiveInHierarchy);
@@ -1184,15 +1292,28 @@ internal static unsafe class UnityUiRuntime
             var pathCompare = string.Compare(left.Element.Path, right.Element.Path, StringComparison.OrdinalIgnoreCase);
             return pathCompare != 0 ? pathCompare : left.Element.Id.CompareTo(right.Element.Id);
         });
+    }
 
-        var returnedCount = Math.Min(Math.Max(1, maxResults), candidates.Count);
-        var returned = new List<ScannedUiElement>(returnedCount);
-        for (var i = 0; i < returnedCount; i++)
-            returned.Add(candidates[i]);
+    private sealed class ScanTraversalState
+    {
+        public ScanTraversalState(string? filter, bool includeInactive, bool includeTransforms, int maxResults)
+        {
+            IncludeInactive = includeInactive;
+            IncludeTransforms = includeTransforms;
+            FilterText = string.IsNullOrWhiteSpace(filter) ? null : filter.Trim();
+            Candidates = new List<ScannedUiElement>(Math.Min(Math.Max(1, maxResults), 256));
+        }
 
-        var truncated = stack.Count > 0 && visitedCount >= MaxTraversalNodes;
-        Plugin.Log.LogInfo($"Inspector scan: live hierarchy traversal complete roots={roots.Count}, visited={visitedCount}, matched={candidates.Count}, returned={returned.Count}, transformOnly={transformOnlyCount}, truncated={truncated}, readFailures={readFailureCount}, elapsedMs={stopwatch.ElapsedMilliseconds}.");
-        return new ScanResult(roots.Count, visitedCount, candidates.Count, transformOnlyCount, readFailureCount, truncated, returned);
+        public bool IncludeInactive { get; }
+        public bool IncludeTransforms { get; }
+        public string? FilterText { get; }
+        public List<ScannedUiElement> Candidates { get; }
+        public HashSet<IntPtr> VisitedTransforms { get; } = new();
+        public HashSet<int> SeenElements { get; } = new();
+        public Stack<(IntPtr Transform, int Depth)> Stack { get; } = new();
+        public int VisitedCount { get; set; }
+        public int ReadFailureCount { get; set; }
+        public int TransformOnlyCount { get; set; }
     }
 
     public static UiElement? TryReadRectElement(IntPtr rect, bool includeInactive)
@@ -1258,6 +1379,23 @@ internal static unsafe class UnityUiRuntime
         Plugin.Log.LogInfo($"Inspector edit: apply begin for id={edit.Id}.");
         EnsureInitialized();
 
+        var gameObject = ValidateEditTarget(edit, transform);
+        var isRectTransform = IsRectTransformObject(transform);
+        ApplyActiveEdit(edit, gameObject);
+        ApplyPositionEdit(edit, transform, isRectTransform);
+        ApplySizeEdit(edit, transform, isRectTransform);
+        ApplyAnchorMinEdit(edit, transform, isRectTransform);
+        ApplyAnchorMaxEdit(edit, transform, isRectTransform);
+        ApplyPivotEdit(edit, transform, isRectTransform);
+        ApplyScaleEdit(edit, transform);
+
+        var updated = ReadUpdatedElement(transform, gameObject, isRectTransform);
+        Plugin.Log.LogInfo($"Inspector edit: applied id={edit.Id} in {stopwatch.ElapsedMilliseconds}ms.");
+        return updated;
+    }
+
+    private static IntPtr ValidateEditTarget(EditRequest edit, IntPtr transform)
+    {
         var gameObject = InvokeObject(componentGetGameObject, transform);
         if (gameObject == IntPtr.Zero)
             throw new InvalidOperationException($"Cached inspector target for id {edit.Id} no longer has a GameObject.");
@@ -1266,72 +1404,90 @@ internal static unsafe class UnityUiRuntime
         if (actualId != edit.Id)
             throw new InvalidOperationException($"Cached inspector target id mismatch. Expected {edit.Id}, found {actualId}. Run a fresh scan.");
 
+        return gameObject;
+    }
+
+    private static void ApplyActiveEdit(EditRequest edit, IntPtr gameObject)
+    {
         if (edit.Active.HasValue)
             InvokeSetBool(gameObjectSetActive, gameObject, edit.Active.Value);
+    }
 
-        var isRectTransform = IsRectTransformObject(transform);
+    private static void ApplyPositionEdit(EditRequest edit, IntPtr transform, bool isRectTransform)
+    {
+        if (!HasPositionEdit(edit))
+            return;
 
-        if (isRectTransform && (edit.AnchoredX.HasValue || edit.AnchoredY.HasValue))
-        {
-            var value = InvokeVector2(rectGetAnchoredPosition, transform);
-            if (edit.AnchoredX.HasValue) value.X = edit.AnchoredX.Value;
-            if (edit.AnchoredY.HasValue) value.Y = edit.AnchoredY.Value;
-            InvokeSetVector2(rectSetAnchoredPosition, transform, value);
-        }
-        else if (!isRectTransform && (edit.AnchoredX.HasValue || edit.AnchoredY.HasValue))
-        {
-            var value = InvokeVector3(transformGetLocalPosition, transform);
-            if (edit.AnchoredX.HasValue) value.X = edit.AnchoredX.Value;
-            if (edit.AnchoredY.HasValue) value.Y = edit.AnchoredY.Value;
-            InvokeSetVector3(transformSetLocalPosition, transform, value);
-        }
+        if (isRectTransform)
+            ApplyVector2Edit(rectGetAnchoredPosition, rectSetAnchoredPosition, transform, edit.AnchoredX, edit.AnchoredY);
+        else
+            ApplyVector3Edit(transformGetLocalPosition, transformSetLocalPosition, transform, edit.AnchoredX, edit.AnchoredY, null);
+    }
 
+    private static void ApplySizeEdit(EditRequest edit, IntPtr transform, bool isRectTransform)
+    {
         if (isRectTransform && (edit.Width.HasValue || edit.Height.HasValue))
-        {
-            var value = InvokeVector2(rectGetSizeDelta, transform);
-            if (edit.Width.HasValue) value.X = edit.Width.Value;
-            if (edit.Height.HasValue) value.Y = edit.Height.Value;
-            InvokeSetVector2(rectSetSizeDelta, transform, value);
-        }
+            ApplyVector2Edit(rectGetSizeDelta, rectSetSizeDelta, transform, edit.Width, edit.Height);
+    }
 
+    private static void ApplyAnchorMinEdit(EditRequest edit, IntPtr transform, bool isRectTransform)
+    {
         if (isRectTransform && (edit.AnchorMinX.HasValue || edit.AnchorMinY.HasValue))
-        {
-            var value = InvokeVector2(rectGetAnchorMin, transform);
-            if (edit.AnchorMinX.HasValue) value.X = edit.AnchorMinX.Value;
-            if (edit.AnchorMinY.HasValue) value.Y = edit.AnchorMinY.Value;
-            InvokeSetVector2(rectSetAnchorMin, transform, value);
-        }
+            ApplyVector2Edit(rectGetAnchorMin, rectSetAnchorMin, transform, edit.AnchorMinX, edit.AnchorMinY);
+    }
 
+    private static void ApplyAnchorMaxEdit(EditRequest edit, IntPtr transform, bool isRectTransform)
+    {
         if (isRectTransform && (edit.AnchorMaxX.HasValue || edit.AnchorMaxY.HasValue))
-        {
-            var value = InvokeVector2(rectGetAnchorMax, transform);
-            if (edit.AnchorMaxX.HasValue) value.X = edit.AnchorMaxX.Value;
-            if (edit.AnchorMaxY.HasValue) value.Y = edit.AnchorMaxY.Value;
-            InvokeSetVector2(rectSetAnchorMax, transform, value);
-        }
+            ApplyVector2Edit(rectGetAnchorMax, rectSetAnchorMax, transform, edit.AnchorMaxX, edit.AnchorMaxY);
+    }
 
+    private static void ApplyPivotEdit(EditRequest edit, IntPtr transform, bool isRectTransform)
+    {
         if (isRectTransform && (edit.PivotX.HasValue || edit.PivotY.HasValue))
-        {
-            var value = InvokeVector2(rectGetPivot, transform);
-            if (edit.PivotX.HasValue) value.X = edit.PivotX.Value;
-            if (edit.PivotY.HasValue) value.Y = edit.PivotY.Value;
-            InvokeSetVector2(rectSetPivot, transform, value);
-        }
+            ApplyVector2Edit(rectGetPivot, rectSetPivot, transform, edit.PivotX, edit.PivotY);
+    }
 
+    private static void ApplyScaleEdit(EditRequest edit, IntPtr transform)
+    {
         if (edit.ScaleX.HasValue || edit.ScaleY.HasValue || edit.ScaleZ.HasValue)
-        {
-            var value = InvokeVector3(transformGetLocalScale, transform);
-            if (edit.ScaleX.HasValue) value.X = edit.ScaleX.Value;
-            if (edit.ScaleY.HasValue) value.Y = edit.ScaleY.Value;
-            if (edit.ScaleZ.HasValue) value.Z = edit.ScaleZ.Value;
-            InvokeSetVector3(transformSetLocalScale, transform, value);
-        }
+            ApplyVector3Edit(transformGetLocalScale, transformSetLocalScale, transform, edit.ScaleX, edit.ScaleY, edit.ScaleZ);
+    }
 
-        var updated = isRectTransform
-            ? ReadElement(transform, gameObject, BuildPath(transform), InvokeBool(gameObjectGetActiveInHierarchy, gameObject))
-            : ReadTransformElement(transform, gameObject, BuildPath(transform), InvokeBool(gameObjectGetActiveInHierarchy, gameObject));
-        Plugin.Log.LogInfo($"Inspector edit: applied id={edit.Id} in {stopwatch.ElapsedMilliseconds}ms.");
-        return updated;
+    private static bool HasPositionEdit(EditRequest edit)
+    {
+        return edit.AnchoredX.HasValue || edit.AnchoredY.HasValue;
+    }
+
+    private static void ApplyVector2Edit(IntPtr getter, IntPtr setter, IntPtr target, float? x, float? y)
+    {
+        var value = InvokeVector2(getter, target);
+        if (x.HasValue)
+            value.X = x.Value;
+        if (y.HasValue)
+            value.Y = y.Value;
+        InvokeSetVector2(setter, target, value);
+    }
+
+    private static void ApplyVector3Edit(IntPtr getter, IntPtr setter, IntPtr target, float? x, float? y, float? z)
+    {
+        var value = InvokeVector3(getter, target);
+        if (x.HasValue)
+            value.X = x.Value;
+        if (y.HasValue)
+            value.Y = y.Value;
+        if (z.HasValue)
+            value.Z = z.Value;
+        InvokeSetVector3(setter, target, value);
+    }
+
+    private static UiElement ReadUpdatedElement(IntPtr transform, IntPtr gameObject, bool isRectTransform)
+    {
+        var path = BuildPath(transform);
+        var activeInHierarchy = InvokeBool(gameObjectGetActiveInHierarchy, gameObject);
+        return isRectTransform
+            ? ReadElement(transform, gameObject, path, activeInHierarchy)
+            : ReadTransformElement(transform, gameObject, path, activeInHierarchy);
     }
 
     private static UiElement ReadElement(IntPtr rect, IntPtr gameObject, string path, bool activeInHierarchy)
@@ -1472,17 +1628,17 @@ internal static unsafe class UnityUiRuntime
         if (initialized)
             return;
 
-        objectClass = RequireClass("UnityEngine.CoreModule.dll", "UnityEngine", "Object");
+        var objectClass = RequireClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "Object");
         Plugin.Debug("Resolved UnityEngine.Object.");
-        componentClass = RequireClass("UnityEngine.CoreModule.dll", "UnityEngine", "Component");
+        var componentClass = RequireClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "Component");
         Plugin.Debug("Resolved UnityEngine.Component.");
-        gameObjectClass = RequireClass("UnityEngine.CoreModule.dll", "UnityEngine", "GameObject");
+        var gameObjectClass = RequireClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "GameObject");
         Plugin.Debug("Resolved UnityEngine.GameObject.");
-        transformClass = RequireClass("UnityEngine.CoreModule.dll", "UnityEngine", "Transform");
+        var transformClass = RequireClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "Transform");
         Plugin.Debug("Resolved UnityEngine.Transform.");
-        rectTransformClass = RequireClass("UnityEngine.CoreModule.dll", "UnityEngine", "RectTransform");
+        rectTransformClass = RequireClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "RectTransform");
         Plugin.Debug("Resolved UnityEngine.RectTransform.");
-        canvasClass = RequireClass("UnityEngine.UIModule.dll", "UnityEngine", "Canvas");
+        var canvasClass = RequireClass("UnityEngine.UIModule.dll", UnityInteropNames.Namespace, "Canvas");
         Plugin.Debug("Resolved UnityEngine.Canvas.");
 
         objectGetName = RequireMethod(objectClass, "get_name", 0);
