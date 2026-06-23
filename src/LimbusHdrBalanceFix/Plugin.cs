@@ -669,7 +669,7 @@ internal static class HdrOutputSettingsPatcher
     private static string FormatInt(int? value) => value.HasValue ? value.Value.ToString() : "unknown";
 }
 
-internal static unsafe class VolumeProfilePatcher
+internal static class VolumeProfilePatcher
 {
     private const string SerializedValueField = "m_Value";
     private static readonly List<IntPtr> knownProfileHandles = new();
@@ -968,9 +968,12 @@ internal static unsafe class VolumeProfilePatcher
             if (field == IntPtr.Zero)
                 return false;
 
-            var local = 0f;
-            IL2CPP.il2cpp_field_get_value(parameter, field, &local);
-            value = local;
+            unsafe
+            {
+                var local = 0f;
+                IL2CPP.il2cpp_field_get_value(parameter, field, &local);
+                value = local;
+            }
             return true;
         }
         catch (Exception ex)
@@ -988,8 +991,11 @@ internal static unsafe class VolumeProfilePatcher
             if (field == IntPtr.Zero)
                 return false;
 
-            var local = value;
-            IL2CPP.il2cpp_field_set_value(parameter, field, &local);
+            unsafe
+            {
+                var local = value;
+                IL2CPP.il2cpp_field_set_value(parameter, field, &local);
+            }
             return true;
         }
         catch (Exception ex)
@@ -1008,9 +1014,12 @@ internal static unsafe class VolumeProfilePatcher
             if (field == IntPtr.Zero)
                 return false;
 
-            var local = 0;
-            IL2CPP.il2cpp_field_get_value(parameter, field, &local);
-            value = local;
+            unsafe
+            {
+                var local = 0;
+                IL2CPP.il2cpp_field_get_value(parameter, field, &local);
+                value = local;
+            }
             return true;
         }
         catch (Exception ex)
@@ -1028,8 +1037,11 @@ internal static unsafe class VolumeProfilePatcher
             if (field == IntPtr.Zero)
                 return false;
 
-            var local = value;
-            IL2CPP.il2cpp_field_set_value(parameter, field, &local);
+            unsafe
+            {
+                var local = value;
+                IL2CPP.il2cpp_field_set_value(parameter, field, &local);
+            }
             return true;
         }
         catch (Exception ex)
@@ -1050,8 +1062,11 @@ internal static unsafe class VolumeProfilePatcher
             if (field == IntPtr.Zero)
                 return;
 
-            var value = (byte)1;
-            IL2CPP.il2cpp_field_set_value(parameter, field, &value);
+            unsafe
+            {
+                var value = (byte)1;
+                IL2CPP.il2cpp_field_set_value(parameter, field, &value);
+            }
         }
         catch (Exception ex)
         {
@@ -1124,7 +1139,15 @@ internal static unsafe class VolumeProfilePatcher
         return IntPtr.Zero;
     }
 
-    private static IntPtr InvokeObject(IntPtr method, IntPtr instance, void** args = null)
+    private static IntPtr InvokeObject(IntPtr method, IntPtr instance)
+    {
+        unsafe
+        {
+            return InvokeObjectUnsafe(method, instance, null);
+        }
+    }
+
+    private static unsafe IntPtr InvokeObjectUnsafe(IntPtr method, IntPtr instance, void** args)
     {
         var exception = IntPtr.Zero;
         var result = IL2CPP.il2cpp_runtime_invoke(method, instance, args, ref exception);
@@ -1141,9 +1164,12 @@ internal static unsafe class VolumeProfilePatcher
 
     private static IntPtr InvokeObjectIntArg(IntPtr method, IntPtr instance, int value)
     {
-        var args = stackalloc void*[1];
-        args[0] = &value;
-        return InvokeObject(method, instance, args);
+        unsafe
+        {
+            var args = stackalloc void*[1];
+            args[0] = &value;
+            return InvokeObjectUnsafe(method, instance, args);
+        }
     }
 
     private static string GetClassName(IntPtr obj)

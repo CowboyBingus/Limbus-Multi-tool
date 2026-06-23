@@ -489,7 +489,7 @@ internal static class NativeUnitySettings
         return IntPtr.Zero;
     }
 
-    private static unsafe bool InvokeStaticInt(IntPtr method, string name, int value, out string error)
+    private static bool InvokeStaticInt(IntPtr method, string name, int value, out string error)
     {
         error = "";
         if (method == IntPtr.Zero)
@@ -500,17 +500,20 @@ internal static class NativeUnitySettings
 
         try
         {
-            var exc = IntPtr.Zero;
-            var local = value;
-            var args = stackalloc void*[1];
-            args[0] = &local;
-            IL2CPP.il2cpp_runtime_invoke(method, IntPtr.Zero, args, ref exc);
-            if (exc == IntPtr.Zero)
-                return true;
+            unsafe
+            {
+                var exc = IntPtr.Zero;
+                var local = value;
+                var args = stackalloc void*[1];
+                args[0] = &local;
+                IL2CPP.il2cpp_runtime_invoke(method, IntPtr.Zero, args, ref exc);
+                if (exc == IntPtr.Zero)
+                    return true;
 
-            error = $"IL2CPP exception {Ptr(exc)}";
-            Plugin.Log.LogWarning($"{name} runtime invoke failed: {error}");
-            return false;
+                error = $"IL2CPP exception {Ptr(exc)}";
+                Plugin.Log.LogWarning($"{name} runtime invoke failed: {error}");
+                return false;
+            }
         }
         catch (Exception ex)
         {
@@ -520,7 +523,7 @@ internal static class NativeUnitySettings
         }
     }
 
-    private static unsafe bool InvokeStaticBool(IntPtr method, string name, bool value, out string error)
+    private static bool InvokeStaticBool(IntPtr method, string name, bool value, out string error)
     {
         error = "";
         if (method == IntPtr.Zero)
@@ -531,17 +534,20 @@ internal static class NativeUnitySettings
 
         try
         {
-            var exc = IntPtr.Zero;
-            var local = value ? (byte)1 : (byte)0;
-            var args = stackalloc void*[1];
-            args[0] = &local;
-            IL2CPP.il2cpp_runtime_invoke(method, IntPtr.Zero, args, ref exc);
-            if (exc == IntPtr.Zero)
-                return true;
+            unsafe
+            {
+                var exc = IntPtr.Zero;
+                var local = value ? (byte)1 : (byte)0;
+                var args = stackalloc void*[1];
+                args[0] = &local;
+                IL2CPP.il2cpp_runtime_invoke(method, IntPtr.Zero, args, ref exc);
+                if (exc == IntPtr.Zero)
+                    return true;
 
-            error = $"IL2CPP exception {Ptr(exc)}";
-            Plugin.Log.LogWarning($"{name} runtime invoke failed: {error}");
-            return false;
+                error = $"IL2CPP exception {Ptr(exc)}";
+                Plugin.Log.LogWarning($"{name} runtime invoke failed: {error}");
+                return false;
+            }
         }
         catch (Exception ex)
         {
@@ -683,7 +689,7 @@ internal static class Il2CppFrameDiagnostics
         "verticalsync"
     };
 
-    public static unsafe void DumpFrameRelatedMetadata()
+    public static void DumpFrameRelatedMetadata()
     {
         try
         {
@@ -694,15 +700,14 @@ internal static class Il2CppFrameDiagnostics
                 return;
             }
 
-            if (!TryGetAssemblies(domain, out var assemblies, out var assemblyCount))
+            var result = BuildMetadataReport(domain);
+            if (result == null)
             {
                 Plugin.Log.LogWarning("IL2CPP metadata scan skipped: no assemblies were visible.");
                 return;
             }
 
-            var report = CreateMetadataReport(assemblyCount);
-            var matchedTypes = AppendAssemblyMetadata(report, assemblies, assemblyCount);
-            WriteMetadataReport(report, matchedTypes);
+            WriteMetadataReport(result.Report, result.MatchedTypes);
         }
         catch (Exception ex)
         {
@@ -710,11 +715,31 @@ internal static class Il2CppFrameDiagnostics
         }
     }
 
-    private static unsafe bool TryGetAssemblies(IntPtr domain, out IntPtr* assemblies, out uint assemblyCount)
+    private static MetadataScanResult? BuildMetadataReport(IntPtr domain)
     {
-        assemblyCount = 0;
-        assemblies = IL2CPP.il2cpp_domain_get_assemblies(domain, ref assemblyCount);
-        return assemblyCount > 0;
+        unsafe
+        {
+            uint assemblyCount = 0;
+            var assemblies = IL2CPP.il2cpp_domain_get_assemblies(domain, ref assemblyCount);
+            if (assemblyCount == 0)
+                return null;
+
+            var report = CreateMetadataReport(assemblyCount);
+            var matchedTypes = AppendAssemblyMetadata(report, assemblies, assemblyCount);
+            return new MetadataScanResult(report, matchedTypes);
+        }
+    }
+
+    private sealed class MetadataScanResult
+    {
+        public MetadataScanResult(StringBuilder report, int matchedTypes)
+        {
+            Report = report;
+            MatchedTypes = matchedTypes;
+        }
+
+        public StringBuilder Report { get; }
+        public int MatchedTypes { get; }
     }
 
     private static StringBuilder CreateMetadataReport(uint assemblyCount)

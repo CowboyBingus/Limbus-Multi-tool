@@ -1138,7 +1138,7 @@ internal sealed class HttpRequest
     }
 }
 
-internal static unsafe class UnityUiRuntime
+internal static class UnityUiRuntime
 {
     private const int MaxTraversalNodes = 100000;
 
@@ -1719,7 +1719,15 @@ internal static unsafe class UnityUiRuntime
         return method;
     }
 
-    private static unsafe IntPtr InvokeObject(IntPtr method, IntPtr instance, void** args = null)
+    private static IntPtr InvokeObject(IntPtr method, IntPtr instance)
+    {
+        unsafe
+        {
+            return InvokeObjectUnsafe(method, instance, null);
+        }
+    }
+
+    private static unsafe IntPtr InvokeObjectUnsafe(IntPtr method, IntPtr instance, void** args)
     {
         var exception = IntPtr.Zero;
         var result = IL2CPP.il2cpp_runtime_invoke(method, instance, args, ref exception);
@@ -1746,19 +1754,25 @@ internal static unsafe class UnityUiRuntime
         return Marshal.ReadByte(IL2CPP.il2cpp_object_unbox(result)) != 0;
     }
 
-    private static unsafe void InvokeSetBool(IntPtr method, IntPtr instance, bool value)
+    private static void InvokeSetBool(IntPtr method, IntPtr instance, bool value)
     {
-        var raw = value ? (byte)1 : (byte)0;
-        var args = stackalloc void*[1];
-        args[0] = &raw;
-        InvokeObject(method, instance, args);
+        unsafe
+        {
+            var raw = value ? (byte)1 : (byte)0;
+            var args = stackalloc void*[1];
+            args[0] = &raw;
+            InvokeObjectUnsafe(method, instance, args);
+        }
     }
 
-    private static unsafe IntPtr InvokeObjectIntArg(IntPtr method, IntPtr instance, int value)
+    private static IntPtr InvokeObjectIntArg(IntPtr method, IntPtr instance, int value)
     {
-        var args = stackalloc void*[1];
-        args[0] = &value;
-        return InvokeObject(method, instance, args);
+        unsafe
+        {
+            var args = stackalloc void*[1];
+            args[0] = &value;
+            return InvokeObjectUnsafe(method, instance, args);
+        }
     }
 
     private static Vector2Value InvokeVector2(IntPtr method, IntPtr instance)
@@ -1773,18 +1787,24 @@ internal static unsafe class UnityUiRuntime
         return Marshal.PtrToStructure<Vector3Value>(IL2CPP.il2cpp_object_unbox(result));
     }
 
-    private static unsafe void InvokeSetVector2(IntPtr method, IntPtr instance, Vector2Value value)
+    private static void InvokeSetVector2(IntPtr method, IntPtr instance, Vector2Value value)
     {
-        var args = stackalloc void*[1];
-        args[0] = &value;
-        InvokeObject(method, instance, args);
+        unsafe
+        {
+            var args = stackalloc void*[1];
+            args[0] = &value;
+            InvokeObjectUnsafe(method, instance, args);
+        }
     }
 
-    private static unsafe void InvokeSetVector3(IntPtr method, IntPtr instance, Vector3Value value)
+    private static void InvokeSetVector3(IntPtr method, IntPtr instance, Vector3Value value)
     {
-        var args = stackalloc void*[1];
-        args[0] = &value;
-        InvokeObject(method, instance, args);
+        unsafe
+        {
+            var args = stackalloc void*[1];
+            args[0] = &value;
+            InvokeObjectUnsafe(method, instance, args);
+        }
     }
 
     private static float Round(float value) => MathF.Round(value, 3);

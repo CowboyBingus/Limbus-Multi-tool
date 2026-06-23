@@ -429,21 +429,24 @@ namespace LimbusCanvasFix
         private static nint matchWidthOrHeightField;
         private static int appliedCount;
 
-        public static unsafe void Apply(IntPtr obj)
+        public static void Apply(IntPtr obj)
         {
             if (obj == IntPtr.Zero || !EnsureInitialized()) return;
 
-            var mode = 0;
-            IL2CPP.il2cpp_field_get_value(obj, uiScaleModeField, &mode);
-            if (mode != ScaleWithScreenSize) return;
+            unsafe
+            {
+                var mode = 0;
+                IL2CPP.il2cpp_field_get_value(obj, uiScaleModeField, &mode);
+                if (mode != ScaleWithScreenSize) return;
 
-            var resolution = stackalloc float[2];
-            resolution[0] = 3000f;
-            resolution[1] = 1440f;
-            IL2CPP.il2cpp_field_set_value(obj, referenceResolutionField, resolution);
+                var resolution = stackalloc float[2];
+                resolution[0] = 3000f;
+                resolution[1] = 1440f;
+                IL2CPP.il2cpp_field_set_value(obj, referenceResolutionField, resolution);
 
-            var match = 1f;
-            IL2CPP.il2cpp_field_set_value(obj, matchWidthOrHeightField, &match);
+                var match = 1f;
+                IL2CPP.il2cpp_field_set_value(obj, matchWidthOrHeightField, &match);
+            }
 
             appliedCount++;
             if (appliedCount <= 5)
@@ -478,7 +481,7 @@ namespace LimbusCanvasFix
         }
     }
 
-    internal static unsafe class LayoutRuleMaintainer
+    internal static class LayoutRuleMaintainer
     {
         private const int MaxPathDepth = 80;
         private const int MaxScanNodes = 6000;
@@ -949,7 +952,15 @@ namespace LimbusCanvasFix
                 : IL2CPP.il2cpp_class_get_method_from_name(fallbackClass, name, args);
         }
 
-        private static unsafe IntPtr InvokeObject(IntPtr method, IntPtr instance, void** args = null)
+        private static IntPtr InvokeObject(IntPtr method, IntPtr instance)
+        {
+            unsafe
+            {
+                return InvokeObjectUnsafe(method, instance, null);
+            }
+        }
+
+        private static unsafe IntPtr InvokeObjectUnsafe(IntPtr method, IntPtr instance, void** args)
         {
             var exception = IntPtr.Zero;
             var result = IL2CPP.il2cpp_runtime_invoke(method, instance, args, ref exception);
@@ -970,11 +981,14 @@ namespace LimbusCanvasFix
             return Marshal.ReadInt32(IL2CPP.il2cpp_object_unbox(result));
         }
 
-        private static unsafe IntPtr InvokeObjectIntArg(IntPtr method, IntPtr instance, int value)
+        private static IntPtr InvokeObjectIntArg(IntPtr method, IntPtr instance, int value)
         {
-            var args = stackalloc void*[1];
-            args[0] = &value;
-            return InvokeObject(method, instance, args);
+            unsafe
+            {
+                var args = stackalloc void*[1];
+                args[0] = &value;
+                return InvokeObjectUnsafe(method, instance, args);
+            }
         }
 
         private static Vector2Value InvokeVector2(IntPtr method, IntPtr instance)
@@ -989,18 +1003,24 @@ namespace LimbusCanvasFix
             return Marshal.PtrToStructure<Vector3Value>(IL2CPP.il2cpp_object_unbox(result));
         }
 
-        private static unsafe void InvokeSetVector2(IntPtr method, IntPtr instance, Vector2Value value)
+        private static void InvokeSetVector2(IntPtr method, IntPtr instance, Vector2Value value)
         {
-            var args = stackalloc void*[1];
-            args[0] = &value;
-            InvokeObject(method, instance, args);
+            unsafe
+            {
+                var args = stackalloc void*[1];
+                args[0] = &value;
+                InvokeObjectUnsafe(method, instance, args);
+            }
         }
 
-        private static unsafe void InvokeSetVector3(IntPtr method, IntPtr instance, Vector3Value value)
+        private static void InvokeSetVector3(IntPtr method, IntPtr instance, Vector3Value value)
         {
-            var args = stackalloc void*[1];
-            args[0] = &value;
-            InvokeObject(method, instance, args);
+            unsafe
+            {
+                var args = stackalloc void*[1];
+                args[0] = &value;
+                InvokeObjectUnsafe(method, instance, args);
+            }
         }
 
         private static void ReportFailure(string phase, Exception ex)
