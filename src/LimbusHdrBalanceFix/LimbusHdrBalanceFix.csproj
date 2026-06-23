@@ -17,6 +17,10 @@
   <ItemGroup>
     <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
     <Compile Include="HdrBalanceHost.cs" />
+    <Compile Include="HdrNativeDetour.cs" />
+    <Compile Include="HdrBalanceDetours.cs" />
+    <Compile Include="HdrOutputSettingsPatcher.cs" />
+    <Compile Include="VolumeProfilePatcher.cs" />
     <Compile Include="Plugin.cs" />
   </ItemGroup>
 
