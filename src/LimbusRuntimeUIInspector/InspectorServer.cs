@@ -7,8 +7,10 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using LimbusRuntimeUIInspector.Contracts;
+using LimbusRuntimeUIInspector.Jobs;
 
-namespace LimbusRuntimeUIInspector;
+namespace LimbusRuntimeUIInspector.Server;
 
 internal static class InspectorServer
 {
@@ -24,7 +26,7 @@ internal static class InspectorServer
             if (running)
                 return;
 
-            Plugin.Debug($"Starting localhost server on port {port}.");
+            InspectorHost.Debug($"Starting localhost server on port {port}.");
             listener = new TcpListener(IPAddress.Loopback, port);
             listener.Start();
             running = true;
@@ -34,7 +36,7 @@ internal static class InspectorServer
                 Name = "LimbusRuntimeUIInspectorServer"
             };
             thread.Start();
-            Plugin.Debug("Inspector server listener thread started.");
+            InspectorHost.Debug("Inspector server listener thread started.");
         }
     }
 
@@ -45,7 +47,7 @@ internal static class InspectorServer
             running = false;
             try { listener?.Stop(); } catch { /* Stop is best-effort when the listener is already disposed. */ }
             listener = null;
-            Plugin.Debug("Inspector server stopped.");
+            InspectorHost.Debug("Inspector server stopped.");
         }
     }
 
@@ -69,7 +71,7 @@ internal static class InspectorServer
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogWarning($"Inspector server accept failed: {ex.Message}");
+                InspectorHost.Log.LogWarning($"Inspector server accept failed: {ex.Message}");
             }
         }
     }
@@ -79,7 +81,7 @@ internal static class InspectorServer
         if (!running)
             return false;
 
-        Plugin.Log.LogWarning($"Inspector server socket stopped unexpectedly: {ex.SocketErrorCode}.");
+        InspectorHost.Log.LogWarning($"Inspector server socket stopped unexpectedly: {ex.SocketErrorCode}.");
         return true;
     }
 
@@ -98,12 +100,12 @@ internal static class InspectorServer
                     return;
 
                 var requestId = Interlocked.Increment(ref nextRequestId);
-                Plugin.Debug($"HTTP {requestId} {request.Method} {request.Path} begin.");
+                InspectorHost.Debug($"HTTP {requestId} {request.Method} {request.Path} begin.");
                 HandleRequest(stream, request, requestId);
             }
             catch (Exception ex)
             {
-                Plugin.Log.LogWarning($"Inspector request failed: {ex}");
+                InspectorHost.Log.LogWarning($"Inspector request failed: {ex}");
                 WriteResponse(stream, 500, ContentTypes.Json, JsonSerializer.Serialize(new ApiResponse<object>(false, null, ex.Message), JsonOptions.Default));
             }
         }
@@ -131,7 +133,7 @@ internal static class InspectorServer
             return false;
 
         WriteResponse(stream, 200, "text/html; charset=utf-8", InspectorPage.Html);
-        Plugin.Debug($"HTTP {requestId} {request.Path} served page.");
+        InspectorHost.Debug($"HTTP {requestId} {request.Path} served page.");
         return true;
     }
 
@@ -146,7 +148,7 @@ internal static class InspectorServer
         var maxResults = GetRequestedMaxResults(request);
         var job = InspectorJobs.QueueScan(filter, includeInactive, includeTransforms, maxResults);
         WriteJson(stream, 200, new ApiResponse<JobSnapshot>(true, job, null));
-        Plugin.Debug($"HTTP {requestId} queued scan job {job.JobId}.");
+        InspectorHost.Debug($"HTTP {requestId} queued scan job {job.JobId}.");
         return true;
     }
 
@@ -169,7 +171,7 @@ internal static class InspectorServer
         }
 
         WriteJson(stream, 200, new ApiResponse<JobSnapshot>(true, snapshot, null));
-        Plugin.Debug($"HTTP {requestId} returned job {jobId} state={snapshot.State}.");
+        InspectorHost.Debug($"HTTP {requestId} returned job {jobId} state={snapshot.State}.");
         return true;
     }
 
@@ -187,7 +189,7 @@ internal static class InspectorServer
 
         var job = InspectorJobs.QueueEdit(edit);
         WriteJson(stream, 200, new ApiResponse<JobSnapshot>(true, job, null));
-        Plugin.Debug($"HTTP {requestId} queued edit job {job.JobId} for id={edit.Id}.");
+        InspectorHost.Debug($"HTTP {requestId} queued edit job {job.JobId} for id={edit.Id}.");
         return true;
     }
 
@@ -197,13 +199,13 @@ internal static class InspectorServer
             return false;
 
         WriteResponse(stream, 200, ContentTypes.Json, "{\"ok\":true,\"name\":\"LimbusRuntimeUIInspector\"}");
-        Plugin.Debug($"HTTP {requestId} status ok.");
+        InspectorHost.Debug($"HTTP {requestId} status ok.");
         return true;
     }
 
     private static int GetRequestedMaxResults(HttpRequest request)
     {
-        var maxResults = Math.Max(1, Plugin.MaxResults.Value);
+        var maxResults = InspectorHost.MaxResults;
         if (request.Query.TryGetValue("maxResults", out var rawMaxResults) &&
             int.TryParse(rawMaxResults, NumberStyles.Integer, CultureInfo.InvariantCulture, out var requestedMaxResults))
         {

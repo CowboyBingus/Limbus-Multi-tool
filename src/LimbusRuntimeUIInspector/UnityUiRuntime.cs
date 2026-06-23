@@ -6,7 +6,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using static LimbusShared.Il2CppLookup;
 
-namespace LimbusRuntimeUIInspector;
+namespace LimbusRuntimeUIInspector.Unity;
 
 internal static partial class UnityUiRuntime
 {
@@ -77,10 +77,10 @@ internal static partial class UnityUiRuntime
     public static void ForceUpdateCanvasesForInspector()
     {
         var stopwatch = Stopwatch.StartNew();
-        Plugin.Log.LogInfo("Inspector scan: Canvas.ForceUpdateCanvases begin.");
+        InspectorHost.Log.LogInfo("Inspector scan: Canvas.ForceUpdateCanvases begin.");
         EnsureInitialized();
         Il2CppInvoke.Object(canvasForceUpdateCanvases, IntPtr.Zero);
-        Plugin.Log.LogInfo($"Inspector scan: Canvas.ForceUpdateCanvases complete after {stopwatch.ElapsedMilliseconds}ms.");
+        InspectorHost.Log.LogInfo($"Inspector scan: Canvas.ForceUpdateCanvases complete after {stopwatch.ElapsedMilliseconds}ms.");
     }
 
     public static string TryDescribeObject(IntPtr obj)
@@ -129,17 +129,17 @@ internal static partial class UnityUiRuntime
             return;
 
         var objectClass = RequireClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "Object");
-        Plugin.Debug("Resolved UnityEngine.Object.");
+        InspectorHost.Debug("Resolved UnityEngine.Object.");
         var componentClass = RequireClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "Component");
-        Plugin.Debug("Resolved UnityEngine.Component.");
+        InspectorHost.Debug("Resolved UnityEngine.Component.");
         var gameObjectClass = RequireClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "GameObject");
-        Plugin.Debug("Resolved UnityEngine.GameObject.");
+        InspectorHost.Debug("Resolved UnityEngine.GameObject.");
         var transformClass = RequireClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "Transform");
-        Plugin.Debug("Resolved UnityEngine.Transform.");
+        InspectorHost.Debug("Resolved UnityEngine.Transform.");
         rectTransformClass = RequireClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "RectTransform");
-        Plugin.Debug("Resolved UnityEngine.RectTransform.");
+        InspectorHost.Debug("Resolved UnityEngine.RectTransform.");
         var canvasClass = RequireClass("UnityEngine.UIModule.dll", UnityInteropNames.Namespace, "Canvas");
-        Plugin.Debug("Resolved UnityEngine.Canvas.");
+        InspectorHost.Debug("Resolved UnityEngine.Canvas.");
 
         objectGetName = RequireMethod(objectClass, "get_name", 0);
         objectGetInstanceId = RequireMethod(objectClass, "GetInstanceID", 0);

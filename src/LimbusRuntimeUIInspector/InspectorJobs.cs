@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
+using LimbusRuntimeUIInspector.Contracts;
+using LimbusRuntimeUIInspector.Unity;
 
-namespace LimbusRuntimeUIInspector;
+namespace LimbusRuntimeUIInspector.Jobs;
 
 internal static class InspectorJobs
 {
@@ -52,7 +54,7 @@ internal static class InspectorJobs
             if (UnityPumpDetour.EnsureInstalled())
             {
                 pending.Enqueue(job);
-                Plugin.Log.LogInfo($"Inspector {job.Kind} job {job.JobId} queued.");
+                InspectorHost.Log.LogInfo($"Inspector {job.Kind} job {job.JobId} queued.");
             }
             else
             {
@@ -104,7 +106,7 @@ internal sealed class InspectorJob
     {
         State = "running";
         stopwatch.Restart();
-        Plugin.Log.LogInfo($"Inspector {Kind} job {JobId} begin.");
+        InspectorHost.Log.LogInfo($"Inspector {Kind} job {JobId} begin.");
         try
         {
             if (Kind == "scan")
@@ -119,7 +121,7 @@ internal sealed class InspectorJob
                     throw new InvalidOperationException($"Element id {edit.Id} is not in the inspector cache. Run a scan first and select a captured element.");
 
                 element = UnityUiRuntime.ApplyEdit(edit, rect);
-                Plugin.Log.LogInfo($"Inspector edit job {JobId} complete: id={edit.Id}, elapsedMs={stopwatch.ElapsedMilliseconds}.");
+                InspectorHost.Log.LogInfo($"Inspector edit job {JobId} complete: id={edit.Id}, elapsedMs={stopwatch.ElapsedMilliseconds}.");
             }
 
             State = "complete";
@@ -128,7 +130,7 @@ internal sealed class InspectorJob
         {
             error = ex.ToString();
             State = "failed";
-            Plugin.Log.LogWarning($"Inspector {Kind} job {JobId} failed after {stopwatch.ElapsedMilliseconds}ms: {ex}");
+            InspectorHost.Log.LogWarning($"Inspector {Kind} job {JobId} failed after {stopwatch.ElapsedMilliseconds}ms: {ex}");
         }
         finally
         {
@@ -149,14 +151,14 @@ internal sealed class InspectorJob
         result = new ElementList(scanElements.Count, new List<UiElement>(elements));
         State = "complete";
         stopwatch.Stop();
-        Plugin.Log.LogInfo($"Inspector scan job {JobId} complete ({reason}): count={result.Count}, elapsedMs={stopwatch.ElapsedMilliseconds}.");
+        InspectorHost.Log.LogInfo($"Inspector scan job {JobId} complete ({reason}): count={result.Count}, elapsedMs={stopwatch.ElapsedMilliseconds}.");
     }
 
     public void Fail(string message)
     {
         error = message;
         State = "failed";
-        Plugin.Log.LogWarning($"Inspector {Kind} job {JobId} failed: {message}");
+        InspectorHost.Log.LogWarning($"Inspector {Kind} job {JobId} failed: {message}");
     }
 
     public JobSnapshot Snapshot() =>

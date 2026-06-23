@@ -15,7 +15,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\Shared\NativeInterop.cs" />
+    <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+    <Compile Include="FramePacingHost.cs" />
     <Compile Include="Plugin.cs" />
   </ItemGroup>
 

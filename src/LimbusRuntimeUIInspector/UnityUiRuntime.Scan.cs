@@ -2,8 +2,9 @@ using LimbusShared;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using LimbusRuntimeUIInspector.Contracts;
 
-namespace LimbusRuntimeUIInspector;
+namespace LimbusRuntimeUIInspector.Unity;
 
 internal static partial class UnityUiRuntime
 {
@@ -13,10 +14,10 @@ internal static partial class UnityUiRuntime
         EnsureInitialized();
 
         var roots = CanvasRootRegistry.SnapshotRoots();
-        Plugin.Log.LogInfo($"Inspector scan: live hierarchy traversal begin roots={roots.Count}, includeInactive={includeInactive}, includeTransforms={includeTransforms}, maxResults={maxResults}, filter='{filter ?? ""}'.");
+        InspectorHost.Log.LogInfo($"Inspector scan: live hierarchy traversal begin roots={roots.Count}, includeInactive={includeInactive}, includeTransforms={includeTransforms}, maxResults={maxResults}, filter='{filter ?? ""}'.");
         if (roots.Count == 0)
         {
-            Plugin.Log.LogWarning("Inspector scan: no UI roots have been observed yet. Let the game reach an active UI screen, then scan again.");
+            InspectorHost.Log.LogWarning("Inspector scan: no UI roots have been observed yet. Let the game reach an active UI screen, then scan again.");
             return new ScanResult(0, 0, 0, 0, 0, false, new List<ScannedUiElement>());
         }
 
@@ -32,7 +33,7 @@ internal static partial class UnityUiRuntime
             returned.Add(state.Candidates[i]);
 
         var truncated = state.Stack.Count > 0 && state.VisitedCount >= MaxTraversalNodes;
-        Plugin.Log.LogInfo($"Inspector scan: live hierarchy traversal complete roots={roots.Count}, visited={state.VisitedCount}, matched={state.Candidates.Count}, returned={returned.Count}, transformOnly={state.TransformOnlyCount}, truncated={truncated}, readFailures={state.ReadFailureCount}, elapsedMs={stopwatch.ElapsedMilliseconds}.");
+        InspectorHost.Log.LogInfo($"Inspector scan: live hierarchy traversal complete roots={roots.Count}, visited={state.VisitedCount}, matched={state.Candidates.Count}, returned={returned.Count}, transformOnly={state.TransformOnlyCount}, truncated={truncated}, readFailures={state.ReadFailureCount}, elapsedMs={stopwatch.ElapsedMilliseconds}.");
         return new ScanResult(roots.Count, state.VisitedCount, state.Candidates.Count, state.TransformOnlyCount, state.ReadFailureCount, truncated, returned);
     }
 
@@ -108,7 +109,7 @@ internal static partial class UnityUiRuntime
             if (depth == 0)
                 CanvasRootRegistry.ForgetRoot(transform, "root read failed");
             if (state.ReadFailureCount <= 12)
-                Plugin.Debug($"Inspector scan: failed to read transform 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
+                InspectorHost.Debug($"Inspector scan: failed to read transform 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
             return null;
         }
     }
@@ -161,7 +162,7 @@ internal static partial class UnityUiRuntime
         }
         catch (Exception ex)
         {
-            Plugin.Debug($"Inspector scan: failed to read child count for 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
+            InspectorHost.Debug($"Inspector scan: failed to read child count for 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
             return false;
         }
 
@@ -175,7 +176,7 @@ internal static partial class UnityUiRuntime
             }
             catch (Exception ex)
             {
-                Plugin.Debug($"Inspector scan: failed to read child {i} for 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
+                InspectorHost.Debug($"Inspector scan: failed to read child {i} for 0x{transform.ToString("X")} ({TryDescribeObject(transform)}): {ex.GetType().Name}: {ex.Message}");
             }
         }
 

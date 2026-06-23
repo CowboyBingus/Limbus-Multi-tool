@@ -15,7 +15,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\Shared\NativeInterop.cs" />
+    <Compile Include="..\Shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+    <Compile Include="CanvasFixHost.cs" />
     <Compile Include="CanvasFixPlugin.cs" />
     <Compile Include="DisableGuard.cs" />
   </ItemGroup>

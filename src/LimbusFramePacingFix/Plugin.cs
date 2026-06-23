@@ -1,6 +1,5 @@
 using BepInEx;
 using BepInEx.Configuration;
-using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
 using LimbusShared;
@@ -22,11 +21,9 @@ public sealed class Plugin : BasePlugin
     public const string GUID = "com.you.limbusframepacingfix";
     public const string NAME = "LimbusFramePacingFix";
     public const string VERSION = "0.4.1";
-    internal const string UnityCoreModule = "UnityEngine.CoreModule.dll";
     private const string FramePacingSection = "Frame pacing";
     private const string DiagnosticsSection = "Diagnostics";
 
-    private static ManualLogSource? log;
     private static ConfigEntry<bool>? enabled;
     private static ConfigEntry<int>? targetFrameRate;
     private static ConfigEntry<int>? vSyncCount;
@@ -40,32 +37,44 @@ public sealed class Plugin : BasePlugin
     private static ConfigEntry<bool>? patchGameFrameRateMethods;
     private static ConfigEntry<bool>? dumpMetadataOnLoad;
 
-    internal static new ManualLogSource Log => log ?? throw new InvalidOperationException($"{NAME} logging is not initialized.");
-    internal static ConfigEntry<bool> Enabled => Required(enabled, nameof(Enabled));
-    internal static ConfigEntry<int> TargetFrameRate => Required(targetFrameRate, nameof(TargetFrameRate));
-    internal static ConfigEntry<int> VSyncCount => Required(vSyncCount, nameof(VSyncCount));
-    internal static ConfigEntry<bool> ForceMaximizedWindow => Required(forceMaximizedWindow, nameof(ForceMaximizedWindow));
-    internal static ConfigEntry<bool> RunInBackground => Required(runInBackground, nameof(RunInBackground));
-    internal static ConfigEntry<bool> AllowDisplayModeChanges => Required(allowDisplayModeChanges, nameof(AllowDisplayModeChanges));
-    internal static ConfigEntry<bool> ForceOnDemandEveryFrame => Required(forceOnDemandEveryFrame, nameof(ForceOnDemandEveryFrame));
-    internal static ConfigEntry<int> MaxQueuedFrames => Required(maxQueuedFrames, nameof(MaxQueuedFrames));
-    internal static ConfigEntry<float> ReapplyIntervalSeconds => Required(reapplyIntervalSeconds, nameof(ReapplyIntervalSeconds));
-    internal static ConfigEntry<bool> ApplyNativeUnitySettings => Required(applyNativeUnitySettings, nameof(ApplyNativeUnitySettings));
-    internal static ConfigEntry<bool> PatchGameFrameRateMethods => Required(patchGameFrameRateMethods, nameof(PatchGameFrameRateMethods));
-    internal static ConfigEntry<bool> DumpMetadataOnLoad => Required(dumpMetadataOnLoad, nameof(DumpMetadataOnLoad));
+    private static ConfigEntry<bool> Enabled => Required(enabled, nameof(Enabled));
+    private static ConfigEntry<int> TargetFrameRate => Required(targetFrameRate, nameof(TargetFrameRate));
+    private static ConfigEntry<int> VSyncCount => Required(vSyncCount, nameof(VSyncCount));
+    private static ConfigEntry<bool> ForceMaximizedWindow => Required(forceMaximizedWindow, nameof(ForceMaximizedWindow));
+    private static ConfigEntry<bool> RunInBackground => Required(runInBackground, nameof(RunInBackground));
+    private static ConfigEntry<bool> AllowDisplayModeChanges => Required(allowDisplayModeChanges, nameof(AllowDisplayModeChanges));
+    private static ConfigEntry<bool> ForceOnDemandEveryFrame => Required(forceOnDemandEveryFrame, nameof(ForceOnDemandEveryFrame));
+    private static ConfigEntry<int> MaxQueuedFrames => Required(maxQueuedFrames, nameof(MaxQueuedFrames));
+    private static ConfigEntry<float> ReapplyIntervalSeconds => Required(reapplyIntervalSeconds, nameof(ReapplyIntervalSeconds));
+    private static ConfigEntry<bool> ApplyNativeUnitySettings => Required(applyNativeUnitySettings, nameof(ApplyNativeUnitySettings));
+    private static ConfigEntry<bool> PatchGameFrameRateMethods => Required(patchGameFrameRateMethods, nameof(PatchGameFrameRateMethods));
+    private static ConfigEntry<bool> DumpMetadataOnLoad => Required(dumpMetadataOnLoad, nameof(DumpMetadataOnLoad));
 
     public override void Load()
     {
-        InitializeLog(base.Log);
         BindConfig(Config);
+        FramePacingHost.Initialize(
+            base.Log,
+            Enabled,
+            TargetFrameRate,
+            VSyncCount,
+            ForceMaximizedWindow,
+            RunInBackground,
+            AllowDisplayModeChanges,
+            ForceOnDemandEveryFrame,
+            MaxQueuedFrames,
+            ReapplyIntervalSeconds,
+            ApplyNativeUnitySettings,
+            PatchGameFrameRateMethods,
+            DumpMetadataOnLoad);
 
         CanvasScalerFramePacingDetour.Install();
         NativeUnitySettings.InstallSetterDetours();
         GameFrameRateDetours.Install();
-        FramePacingEnforcer.Apply("Plugin.Load", forceLog: true);
+        FramePacingEnforcer.Apply("Load", forceLog: true);
         if (DumpMetadataOnLoad.Value)
             Il2CppFrameDiagnostics.DumpFrameRelatedMetadata();
-        Log.LogInfo(
+        FramePacingHost.Log.LogInfo(
             $"{NAME} {VERSION} loaded. " +
             $"Enabled={Enabled.Value}, TargetFrameRate={TargetFrameRate.Value}, VSyncCount={VSyncCount.Value}, " +
             $"AllowDisplayModeChanges={AllowDisplayModeChanges.Value}, ForceMaximizedWindow={ForceMaximizedWindow.Value}, RunInBackground={RunInBackground.Value}, " +
@@ -80,11 +89,6 @@ public sealed class Plugin : BasePlugin
         GameFrameRateDetours.Uninstall();
         NativeUnitySettings.UninstallSetterDetours();
         return true;
-    }
-
-    private static void InitializeLog(ManualLogSource source)
-    {
-        log = source;
     }
 
     private static void BindConfig(ConfigFile config)
@@ -103,17 +107,7 @@ public sealed class Plugin : BasePlugin
         dumpMetadataOnLoad = config.Bind(DiagnosticsSection, "DumpMetadataOnLoad", false, "Writes an IL2CPP frame/display metadata scan for reverse engineering. Leave off for normal play.");
     }
 
-    internal static bool IsEnabled => IsSet(enabled);
-    internal static bool ShouldApplyNativeUnitySettings => IsEnabled && IsSet(applyNativeUnitySettings);
-    internal static bool ShouldPatchGameFrameRateMethods => IsEnabled && IsSet(patchGameFrameRateMethods);
-    internal static bool ShouldForceMaximizedWindow =>
-        IsEnabled &&
-        IsSet(allowDisplayModeChanges) &&
-        IsSet(forceMaximizedWindow);
-
     private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => PluginConfig.Required(entry, NAME, name);
-
-    private static bool IsSet(ConfigEntry<bool>? entry) => PluginConfig.IsSet(entry);
 }
 
 internal static class FramePacingEnforcer
@@ -123,10 +117,10 @@ internal static class FramePacingEnforcer
 
     public static void ApplyThrottled(string reason)
     {
-        if (!Plugin.ShouldApplyNativeUnitySettings)
+        if (!FramePacingHost.ShouldApplyNativeUnitySettings)
             return;
 
-        var interval = Math.Max(0.05f, Plugin.ReapplyIntervalSeconds.Value);
+        var interval = Math.Max(0.05f, FramePacingHost.ReapplyIntervalSeconds.Value);
         var now = DateTime.UtcNow;
         if (now < nextApplyUtc)
             return;
@@ -137,7 +131,7 @@ internal static class FramePacingEnforcer
 
     public static void Apply(string reason, bool forceLog)
     {
-        if (!Plugin.ShouldApplyNativeUnitySettings)
+        if (!FramePacingHost.ShouldApplyNativeUnitySettings)
             return;
 
         try
@@ -155,25 +149,25 @@ internal static class FramePacingEnforcer
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"Frame pacing apply failed during {reason}: {ex.GetType().Name}: {ex.Message}");
+            FramePacingHost.Log.LogWarning($"Frame pacing apply failed during {reason}: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
     private static void ApplyTargetFrameRate(List<string> changes)
     {
-        var value = Plugin.TargetFrameRate.Value;
+        var value = FramePacingHost.TargetFrameRate.Value;
         AddResult(changes, "targetFrameRate", $"targetFrameRate={value}", NativeUnitySettings.TrySetTargetFrameRate(value, out var error), error);
     }
 
     private static void ApplyVSyncCount(List<string> changes)
     {
-        var value = Math.Max(0, Plugin.VSyncCount.Value);
+        var value = Math.Max(0, FramePacingHost.VSyncCount.Value);
         AddResult(changes, "vSyncCount", $"vSyncCount={value}", NativeUnitySettings.TrySetVSyncCount(value, out var error), error);
     }
 
     private static void ApplyRenderFrameInterval(List<string> changes)
     {
-        if (!Plugin.ForceOnDemandEveryFrame.Value)
+        if (!FramePacingHost.ForceOnDemandEveryFrame.Value)
             return;
 
         AddResult(changes, "renderFrameInterval", "renderFrameInterval=1", NativeUnitySettings.TrySetRenderFrameInterval(1, out var error), error);
@@ -181,7 +175,7 @@ internal static class FramePacingEnforcer
 
     private static void ApplyMaxQueuedFrames(List<string> changes)
     {
-        var value = Plugin.MaxQueuedFrames.Value;
+        var value = FramePacingHost.MaxQueuedFrames.Value;
         if (value <= 0)
             return;
 
@@ -190,13 +184,13 @@ internal static class FramePacingEnforcer
 
     private static void ApplyRunInBackground(List<string> changes)
     {
-        var value = Plugin.RunInBackground.Value;
+        var value = FramePacingHost.RunInBackground.Value;
         AddResult(changes, "runInBackground", $"runInBackground={value}", NativeUnitySettings.TrySetRunInBackground(value, out var error), error);
     }
 
     private static void ApplyDisplayMode(List<string> changes)
     {
-        if (!Plugin.ShouldForceMaximizedWindow)
+        if (!FramePacingHost.ShouldForceMaximizedWindow)
             return;
 
         if (NativeUnitySettings.TrySetFullScreenMode(FullScreenWindowMode, out var fullScreenModeError))
@@ -222,7 +216,7 @@ internal static class FramePacingEnforcer
         if (!forceLog && nextLogCount > 8 && nextLogCount % 120 != 0)
             return;
 
-        Plugin.Log.LogInfo(
+        FramePacingHost.Log.LogInfo(
             $"Frame pacing apply #{nextLogCount} ({reason}): " +
             (changes.Count == 0 ? "no changes" : string.Join(", ", changes)) + ".");
     }
@@ -257,28 +251,28 @@ internal static class CanvasScalerFramePacingDetour
         var klass = IL2CPP.GetIl2CppClass("UnityEngine.UI.dll", "UnityEngine.UI", "CanvasScaler");
         if (klass == IntPtr.Zero)
         {
-            Plugin.Log.LogWarning("CanvasScaler.OnEnable frame pacing detour skipped: class was not resolved.");
+            FramePacingHost.Log.LogWarning("CanvasScaler.OnEnable frame pacing detour skipped: class was not resolved.");
             return;
         }
 
         var method = IL2CPP.il2cpp_class_get_method_from_name(klass, "OnEnable", 0);
         if (method == IntPtr.Zero)
         {
-            Plugin.Log.LogWarning("CanvasScaler.OnEnable frame pacing detour skipped: method was not resolved.");
+            FramePacingHost.Log.LogWarning("CanvasScaler.OnEnable frame pacing detour skipped: method was not resolved.");
             return;
         }
 
         var methodPointer = Marshal.ReadIntPtr(method);
         if (methodPointer == IntPtr.Zero)
         {
-            Plugin.Log.LogWarning("CanvasScaler.OnEnable frame pacing detour skipped: method pointer was null.");
+            FramePacingHost.Log.LogWarning("CanvasScaler.OnEnable frame pacing detour skipped: method pointer was null.");
             return;
         }
 
         detour = new NativeDetour(methodPointer, replacement);
         original = detour.GenerateTrampoline<OnEnableDelegate>();
         detour.Apply();
-        Plugin.Log.LogInfo($"CanvasScaler.OnEnable frame pacing detour installed at {Ptr(methodPointer)}.");
+        FramePacingHost.Log.LogInfo($"CanvasScaler.OnEnable frame pacing detour installed at {Ptr(methodPointer)}.");
     }
 
     public static void Uninstall()
@@ -319,12 +313,12 @@ internal static class NativeUnitySettings
             return;
 
         var statuses = new List<string>();
-        var applicationClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine", "Application");
-        var deviceApplicationClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine.Device", "Application");
-        var qualitySettingsClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine", "QualitySettings");
-        var screenClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine", "Screen");
-        var deviceScreenClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine.Device", "Screen");
-        var onDemandRenderingClass = IL2CPP.GetIl2CppClass(Plugin.UnityCoreModule, "UnityEngine.Rendering", "OnDemandRendering");
+        var applicationClass = IL2CPP.GetIl2CppClass(FramePacingHost.UnityCoreModule, "UnityEngine", "Application");
+        var deviceApplicationClass = IL2CPP.GetIl2CppClass(FramePacingHost.UnityCoreModule, "UnityEngine.Device", "Application");
+        var qualitySettingsClass = IL2CPP.GetIl2CppClass(FramePacingHost.UnityCoreModule, "UnityEngine", "QualitySettings");
+        var screenClass = IL2CPP.GetIl2CppClass(FramePacingHost.UnityCoreModule, "UnityEngine", "Screen");
+        var deviceScreenClass = IL2CPP.GetIl2CppClass(FramePacingHost.UnityCoreModule, "UnityEngine.Device", "Screen");
+        var onDemandRenderingClass = IL2CPP.GetIl2CppClass(FramePacingHost.UnityCoreModule, "UnityEngine.Rendering", "OnDemandRendering");
 
         setTargetFrameRate = FindMethod(applicationClass, deviceApplicationClass, "set_targetFrameRate", 1, statuses);
         setVSyncCount = FindMethod(qualitySettingsClass, "set_vSyncCount", 1, statuses);
@@ -335,7 +329,7 @@ internal static class NativeUnitySettings
 
         var initStatus = string.Join(", ", statuses);
         initialized = true;
-        Plugin.Log.LogInfo($"Resolved native Unity setting icalls: {initStatus}");
+        FramePacingHost.Log.LogInfo($"Resolved native Unity setting icalls: {initStatus}");
     }
 
     public static bool TrySetTargetFrameRate(int value, out string error) => InvokeStaticInt(setTargetFrameRate, "set_targetFrameRate", value, out error);
@@ -347,7 +341,7 @@ internal static class NativeUnitySettings
 
     public static void InstallSetterDetours()
     {
-        if (!Plugin.ShouldApplyNativeUnitySettings)
+        if (!FramePacingHost.ShouldApplyNativeUnitySettings)
             return;
 
         EnsureInitialized();
@@ -374,8 +368,8 @@ internal static class NativeUnitySettings
             replacement,
             ref detour,
             ref original,
-            message => Plugin.Log.LogWarning(message),
-            message => Plugin.Log.LogInfo(message));
+            message => FramePacingHost.Log.LogWarning(message),
+            message => FramePacingHost.Log.LogInfo(message));
     }
 
     private static void FreeDetour(ref NativeDetour? detour, ref SetIntNativeDelegate? original)
@@ -385,14 +379,14 @@ internal static class NativeUnitySettings
 
     private static void SetTargetFrameRateDetour(int value, IntPtr methodInfo)
     {
-        var forced = Plugin.IsEnabled ? Plugin.TargetFrameRate.Value : value;
+        var forced = FramePacingHost.IsEnabled ? FramePacingHost.TargetFrameRate.Value : value;
         LogDetourChange("Application.set_targetFrameRate", value, forced);
         originalSetTargetFrameRate?.Invoke(forced, methodInfo);
     }
 
     private static void SetVSyncCountDetour(int value, IntPtr methodInfo)
     {
-        var forced = Plugin.IsEnabled ? Math.Max(0, Plugin.VSyncCount.Value) : value;
+        var forced = FramePacingHost.IsEnabled ? Math.Max(0, FramePacingHost.VSyncCount.Value) : value;
         LogDetourChange("QualitySettings.set_vSyncCount", value, forced);
         originalSetVSyncCount?.Invoke(forced, methodInfo);
     }
@@ -403,7 +397,7 @@ internal static class NativeUnitySettings
             return;
 
         FramePacingState.IncrementDetourLogCount();
-        Plugin.Log.LogInfo($"{name} intercepted: game requested {requested}, applied {applied}.");
+        FramePacingHost.Log.LogInfo($"{name} intercepted: game requested {requested}, applied {applied}.");
     }
 
     private static IntPtr FindMethod(IntPtr klass, string name, int argsCount, List<string> statuses)
@@ -472,14 +466,14 @@ internal static class NativeUnitySettings
                     return true;
 
                 error = $"IL2CPP exception {Ptr(exc)}";
-                Plugin.Log.LogWarning($"{name} runtime invoke failed: {error}");
+                FramePacingHost.Log.LogWarning($"{name} runtime invoke failed: {error}");
                 return false;
             }
         }
         catch (Exception ex)
         {
             error = $"{ex.GetType().Name}: {ex.Message}";
-            Plugin.Log.LogWarning($"{name} runtime invoke failed: {error}");
+            FramePacingHost.Log.LogWarning($"{name} runtime invoke failed: {error}");
             return false;
         }
     }
@@ -504,7 +498,7 @@ internal static class GameFrameRateDetours
 
     public static void Install()
     {
-        if (!Plugin.ShouldPatchGameFrameRateMethods)
+        if (!FramePacingHost.ShouldPatchGameFrameRateMethods)
             return;
 
         try
@@ -517,7 +511,7 @@ internal static class GameFrameRateDetours
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"Game frame-rate detour install failed: {ex.GetType().Name}: {ex.Message}");
+            FramePacingHost.Log.LogWarning($"Game frame-rate detour install failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -541,8 +535,8 @@ internal static class GameFrameRateDetours
             replacement,
             ref detour,
             ref original,
-            message => Plugin.Log.LogWarning(message),
-            message => Plugin.Log.LogInfo(message));
+            message => FramePacingHost.Log.LogWarning(message),
+            message => FramePacingHost.Log.LogInfo(message));
     }
 
     private static void ApplyFrameRateDetour(IntPtr self, byte isBattle, IntPtr methodInfo)
@@ -582,7 +576,7 @@ internal static class Il2CppFrameDiagnostics
             var domain = IL2CPP.il2cpp_domain_get();
             if (domain == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("IL2CPP metadata scan skipped: domain pointer was null.");
+                FramePacingHost.Log.LogWarning("IL2CPP metadata scan skipped: domain pointer was null.");
                 return;
             }
 
@@ -591,7 +585,7 @@ internal static class Il2CppFrameDiagnostics
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"IL2CPP metadata scan failed: {ex.GetType().Name}: {ex.Message}");
+            FramePacingHost.Log.LogWarning($"IL2CPP metadata scan failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -687,18 +681,18 @@ internal static class Il2CppFrameDiagnostics
 
     private static void WriteMetadataReport(StringBuilder report, int matchedTypes)
     {
-        var dir = Path.Combine(Paths.BepInExRootPath, "plugins", Plugin.NAME);
+        var dir = Path.Combine(Paths.BepInExRootPath, "plugins", FramePacingHost.Name);
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "frame-metadata-scan.txt");
         File.WriteAllText(path, report.ToString());
-        Plugin.Log.LogInfo($"IL2CPP metadata scan wrote {matchedTypes} matching types to {path}.");
+        FramePacingHost.Log.LogInfo($"IL2CPP metadata scan wrote {matchedTypes} matching types to {path}.");
     }
 
     private static bool ShouldScanImage(string imageName)
     {
         return imageName.Equals("Assembly-CSharp.dll", StringComparison.OrdinalIgnoreCase)
             || imageName.StartsWith("Unity.AdaptivePerformance", StringComparison.OrdinalIgnoreCase)
-            || imageName.StartsWith(Plugin.UnityCoreModule, StringComparison.OrdinalIgnoreCase);
+            || imageName.StartsWith(FramePacingHost.UnityCoreModule, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsDetailedTarget(string fullName)

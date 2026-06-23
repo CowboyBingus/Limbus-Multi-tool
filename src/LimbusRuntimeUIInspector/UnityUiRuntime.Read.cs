@@ -1,7 +1,8 @@
 using LimbusShared;
 using System;
+using LimbusRuntimeUIInspector.Contracts;
 
-namespace LimbusRuntimeUIInspector;
+namespace LimbusRuntimeUIInspector.Unity;
 
 internal static partial class UnityUiRuntime
 {

@@ -18,7 +18,7 @@ namespace LimbusCanvasFix
                 patched += PatchGuardAssembly(harmony, asm, prefixes);
             }
 
-            Plugin.Log.LogInfo($"Patched {patched} methods to disable guard.");
+            CanvasFixHost.Log.LogInfo($"Patched {patched} methods to disable guard.");
         }
 
         private static (HarmonyMethod Default, HarmonyMethod String, HarmonyMethod Bool) CreatePrefixMethods()
@@ -80,7 +80,7 @@ namespace LimbusCanvasFix
                 }
                 catch (Exception ex)
                 {
-                    Plugin.Log.LogDebug($"[FAIL] {type.FullName}.{method.Name}: {ex.Message}");
+                    CanvasFixHost.Log.LogDebug($"[FAIL] {type.FullName}.{method.Name}: {ex.Message}");
                 }
             }
 

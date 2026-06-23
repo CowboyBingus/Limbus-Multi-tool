@@ -1,7 +1,8 @@
 using BepInEx;
 using BepInEx.Configuration;
-using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
+using LimbusRuntimeUIInspector.Server;
+using LimbusRuntimeUIInspector.Unity;
 using LimbusShared;
 using System;
 
@@ -14,26 +15,24 @@ public sealed class Plugin : BasePlugin
     public const string NAME = "LimbusRuntimeUIInspector";
     public const string VERSION = "0.3.0";
 
-    private static ManualLogSource? log;
     private static ConfigEntry<bool>? enabled;
     private static ConfigEntry<int>? port;
     private static ConfigEntry<int>? maxResults;
     private static ConfigEntry<int>? requestTimeoutMilliseconds;
     private static ConfigEntry<bool>? debugLogging;
 
-    internal static new ManualLogSource Log => log ?? throw new InvalidOperationException($"{NAME} logging is not initialized.");
-    internal static ConfigEntry<bool> Enabled => Required(enabled, nameof(Enabled));
-    internal static ConfigEntry<int> Port => Required(port, nameof(Port));
-    internal static ConfigEntry<int> MaxResults => Required(maxResults, nameof(MaxResults));
-    internal static ConfigEntry<int> RequestTimeoutMilliseconds => Required(requestTimeoutMilliseconds, nameof(RequestTimeoutMilliseconds));
-    internal static ConfigEntry<bool> DebugLogging => Required(debugLogging, nameof(DebugLogging));
+    private static ConfigEntry<bool> Enabled => Required(enabled, nameof(Enabled));
+    private static ConfigEntry<int> Port => Required(port, nameof(Port));
+    private static ConfigEntry<int> MaxResults => Required(maxResults, nameof(MaxResults));
+    private static ConfigEntry<int> RequestTimeoutMilliseconds => Required(requestTimeoutMilliseconds, nameof(RequestTimeoutMilliseconds));
+    private static ConfigEntry<bool> DebugLogging => Required(debugLogging, nameof(DebugLogging));
 
     public override void Load()
     {
-        InitializeLog(base.Log);
         BindConfig(Config);
+        InspectorHost.Initialize(base.Log, MaxResults, DebugLogging);
 
-        Debug("Plugin.Load begin.");
+        InspectorHost.Debug("Load begin.");
         if (Enabled.Value)
         {
             CanvasRootObserveDetour.Install();
@@ -42,7 +41,7 @@ public sealed class Plugin : BasePlugin
             InspectorServer.Start(Port.Value);
         }
 
-        Log.LogInfo($"{NAME} {VERSION} loaded. Enabled={Enabled.Value}, Url=http://127.0.0.1:{Port.Value}/");
+        InspectorHost.Log.LogInfo($"{NAME} {VERSION} loaded. Enabled={Enabled.Value}, Url=http://127.0.0.1:{Port.Value}/");
     }
 
     public override bool Unload()
@@ -53,17 +52,6 @@ public sealed class Plugin : BasePlugin
         RectTransformRootObserveDetour.Uninstall();
         CanvasRootObserveDetour.Uninstall();
         return true;
-    }
-
-    internal static void Debug(string message)
-    {
-        if (IsSet(debugLogging))
-            Log.LogInfo($"[debug] {message}");
-    }
-
-    private static void InitializeLog(ManualLogSource source)
-    {
-        log = source;
     }
 
     private static void BindConfig(ConfigFile config)
@@ -77,5 +65,4 @@ public sealed class Plugin : BasePlugin
 
     private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => PluginConfig.Required(entry, NAME, name);
 
-    private static bool IsSet(ConfigEntry<bool>? entry) => PluginConfig.IsSet(entry);
 }

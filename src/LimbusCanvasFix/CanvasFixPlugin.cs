@@ -1,6 +1,5 @@
 using BepInEx;
 using BepInEx.Unity.IL2CPP;
-using BepInEx.Logging;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
 using LimbusShared;
@@ -21,17 +20,14 @@ namespace LimbusCanvasFix
         public const string NAME    = "LimbusCanvasFix";
         public const string VERSION = "1.2.1";
 
-        private static ManualLogSource? log;
-        internal static new ManualLogSource Log => log ?? throw new InvalidOperationException($"{NAME} logging is not initialized.");
-
         public override void Load()
         {
-            InitializeLog(base.Log);
-            Log.LogInfo($"{NAME} {VERSION} loading...");
+            CanvasFixHost.Initialize(base.Log);
+            CanvasFixHost.Log.LogInfo($"{NAME} {VERSION} loading...");
 
             ApplyPatches();
 
-            Log.LogInfo($"{NAME} ready.");
+            CanvasFixHost.Log.LogInfo($"{NAME} ready.");
         }
 
         public override bool Unload()
@@ -41,11 +37,6 @@ namespace LimbusCanvasFix
             RectTransformLayoutDetour.Uninstall();
             LayoutRuleMaintainer.Reset();
             return true;
-        }
-
-        private static void InitializeLog(ManualLogSource source)
-        {
-            log = source;
         }
 
         private static void ApplyPatches()
@@ -62,13 +53,13 @@ namespace LimbusCanvasFix
                 }
                 catch (Exception ex)
                 {
-                    Log.LogDebug($"Guard stub pass skipped: {ex.Message}");
+                    CanvasFixHost.Log.LogDebug($"Guard stub pass skipped: {ex.Message}");
                 }
-                Log.LogInfo("Runtime patches applied.");
+                CanvasFixHost.Log.LogInfo("Runtime patches applied.");
             }
             catch (Exception ex)
             {
-                Log.LogError($"Patch failed: {ex}");
+                CanvasFixHost.Log.LogError($"Patch failed: {ex}");
             }
         }
 
@@ -80,21 +71,19 @@ namespace LimbusCanvasFix
                 if (field?.GetValue(null) is not Dictionary<string, IntPtr> images)
                     return;
 
-                Log.LogInfo($"IL2CPP image count: {images.Count}");
+                CanvasFixHost.Log.LogInfo($"IL2CPP image count: {images.Count}");
                 foreach (var key in images.Keys.Where(x =>
                     x.Contains("UI", StringComparison.OrdinalIgnoreCase) ||
                     x.Contains(UnityInteropNames.Namespace, StringComparison.OrdinalIgnoreCase)))
                 {
-                    Log.LogInfo($"IL2CPP image: {key}");
+                    CanvasFixHost.Log.LogInfo($"IL2CPP image: {key}");
                 }
             }
             catch (Exception ex)
             {
-                Log.LogDebug($"Could not inspect IL2CPP images: {ex.Message}");
+                CanvasFixHost.Log.LogDebug($"Could not inspect IL2CPP images: {ex.Message}");
             }
         }
-
-        internal static void Apply(IntPtr scaler) => NativeCanvasScaler.Apply(scaler);
     }
 
     internal static class UnityInteropNames
@@ -120,28 +109,28 @@ namespace LimbusCanvasFix
             var klass = IL2CPP.GetIl2CppClass("UnityEngine.UI.dll", "UnityEngine.UI", "CanvasScaler");
             if (klass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("CanvasScaler.OnEnable detour skipped: class was not resolved.");
+                CanvasFixHost.Log.LogWarning("CanvasScaler.OnEnable detour skipped: class was not resolved.");
                 return;
             }
 
             var method = IL2CPP.il2cpp_class_get_method_from_name(klass, "OnEnable", 0);
             if (method == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("CanvasScaler.OnEnable detour skipped: method was not resolved.");
+                CanvasFixHost.Log.LogWarning("CanvasScaler.OnEnable detour skipped: method was not resolved.");
                 return;
             }
 
             var methodPointer = Marshal.ReadIntPtr(method);
             if (methodPointer == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("CanvasScaler.OnEnable detour skipped: method pointer was null.");
+                CanvasFixHost.Log.LogWarning("CanvasScaler.OnEnable detour skipped: method pointer was null.");
                 return;
             }
 
             detour = new NativeDetour(methodPointer, replacement);
             original = detour.GenerateTrampoline<OnEnableDelegate>();
             detour.Apply();
-            Plugin.Log.LogInfo($"CanvasScaler.OnEnable detour installed at {Ptr(methodPointer)}.");
+            CanvasFixHost.Log.LogInfo($"CanvasScaler.OnEnable detour installed at {Ptr(methodPointer)}.");
         }
 
         public static void Uninstall()
@@ -152,7 +141,7 @@ namespace LimbusCanvasFix
         private static void OnEnableReplacement(IntPtr self, IntPtr methodInfo)
         {
             original?.Invoke(self, methodInfo);
-            Plugin.Apply(self);
+                NativeCanvasScaler.Apply(self);
             LayoutRuleMaintainer.ObserveCanvasScaler(self);
         }
 
@@ -176,28 +165,28 @@ namespace LimbusCanvasFix
             var klass = IL2CPP.GetIl2CppClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "RectTransform");
             if (klass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Layout maintainer skipped: UnityEngine.RectTransform class was not resolved.");
+                CanvasFixHost.Log.LogWarning("Layout maintainer skipped: UnityEngine.RectTransform class was not resolved.");
                 return;
             }
 
             var method = IL2CPP.il2cpp_class_get_method_from_name(klass, "SendReapplyDrivenProperties", 1);
             if (method == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Layout maintainer skipped: RectTransform.SendReapplyDrivenProperties was not resolved.");
+                CanvasFixHost.Log.LogWarning("Layout maintainer skipped: RectTransform.SendReapplyDrivenProperties was not resolved.");
                 return;
             }
 
             var methodPointer = Marshal.ReadIntPtr(method);
             if (methodPointer == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Layout maintainer skipped: RectTransform.SendReapplyDrivenProperties pointer was null.");
+                CanvasFixHost.Log.LogWarning("Layout maintainer skipped: RectTransform.SendReapplyDrivenProperties pointer was null.");
                 return;
             }
 
             detour = new NativeDetour(methodPointer, replacement);
             original = detour.GenerateTrampoline<SendReapplyDrivenPropertiesDelegate>();
             detour.Apply();
-            Plugin.Log.LogInfo($"Layout maintainer installed at {Ptr(methodPointer)}.");
+            CanvasFixHost.Log.LogInfo($"Layout maintainer installed at {Ptr(methodPointer)}.");
         }
 
         public static void Uninstall()
@@ -257,7 +246,7 @@ namespace LimbusCanvasFix
             var rectClass = IL2CPP.GetIl2CppClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "RectTransform");
             if (rectClass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Layout write maintainer skipped: UnityEngine.RectTransform class was not resolved.");
+                CanvasFixHost.Log.LogWarning("Layout write maintainer skipped: UnityEngine.RectTransform class was not resolved.");
             }
             else
             {
@@ -280,7 +269,7 @@ namespace LimbusCanvasFix
             var transformClass = IL2CPP.GetIl2CppClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "Transform");
             if (transformClass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Layout write maintainer skipped: UnityEngine.Transform class was not resolved.");
+                CanvasFixHost.Log.LogWarning("Layout write maintainer skipped: UnityEngine.Transform class was not resolved.");
             }
             else
             {
@@ -313,21 +302,21 @@ namespace LimbusCanvasFix
             var method = IL2CPP.il2cpp_class_get_method_from_name(klass, methodName, 1);
             if (method == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning($"Layout write maintainer skipped: {label} was not resolved.");
+                CanvasFixHost.Log.LogWarning($"Layout write maintainer skipped: {label} was not resolved.");
                 return;
             }
 
             var methodPointer = Marshal.ReadIntPtr(method);
             if (methodPointer == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning($"Layout write maintainer skipped: {label} pointer was null.");
+                CanvasFixHost.Log.LogWarning($"Layout write maintainer skipped: {label} pointer was null.");
                 return;
             }
 
             detour = new NativeDetour(methodPointer, replacement);
             original = detour.GenerateTrampoline<T>();
             detour.Apply();
-            Plugin.Log.LogInfo($"Layout write maintainer installed {label} at {Ptr(methodPointer)}.");
+            CanvasFixHost.Log.LogInfo($"Layout write maintainer installed {label} at {Ptr(methodPointer)}.");
         }
 
         private static void AnchoredPositionReplacement(IntPtr self, Vector2Value value, IntPtr methodInfo)
@@ -405,7 +394,7 @@ namespace LimbusCanvasFix
 
             appliedCount++;
             if (appliedCount <= 5)
-                Plugin.Log.LogInfo($"Applied CanvasScaler ultrawide fix ({appliedCount}).");
+                CanvasFixHost.Log.LogInfo($"Applied CanvasScaler ultrawide fix ({appliedCount}).");
         }
 
         private static bool EnsureInitialized()
@@ -415,7 +404,7 @@ namespace LimbusCanvasFix
             var klass = IL2CPP.GetIl2CppClass("UnityEngine.UI.dll", "UnityEngine.UI", "CanvasScaler");
             if (klass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Could not resolve UnityEngine.UI.CanvasScaler IL2CPP class.");
+                CanvasFixHost.Log.LogWarning("Could not resolve UnityEngine.UI.CanvasScaler IL2CPP class.");
                 return false;
             }
 
@@ -428,9 +417,9 @@ namespace LimbusCanvasFix
                 && matchWidthOrHeightField != IntPtr.Zero;
 
             if (!initialized)
-                Plugin.Log.LogWarning("Could not resolve one or more CanvasScaler IL2CPP fields.");
+                CanvasFixHost.Log.LogWarning("Could not resolve one or more CanvasScaler IL2CPP fields.");
             else
-                Plugin.Log.LogInfo("Resolved CanvasScaler IL2CPP fields.");
+                CanvasFixHost.Log.LogInfo("Resolved CanvasScaler IL2CPP fields.");
 
             return initialized;
         }
@@ -522,7 +511,7 @@ namespace LimbusCanvasFix
                 ScanSubtree(transform, ref visited);
                 var count = ++scanCount;
                 if (count <= 12 || count % 100 == 0)
-                    Plugin.Log.LogInfo($"Layout maintainer scanned CanvasScaler root #{count}: visited={visited}.");
+                    CanvasFixHost.Log.LogInfo($"Layout maintainer scanned CanvasScaler root #{count}: visited={visited}.");
             }
             catch (Exception ex)
             {
@@ -731,7 +720,7 @@ namespace LimbusCanvasFix
 
             var count = ++appliedCount;
             if (count <= 20 || count % 500 == 0)
-                Plugin.Log.LogInfo($"Layout maintainer applied {rule.Description}; {string.Join("; ", details)} ({count}).");
+                CanvasFixHost.Log.LogInfo($"Layout maintainer applied {rule.Description}; {string.Join("; ", details)} ({count}).");
         }
 
         private static bool ShouldApply(LayoutWriteKind actual, LayoutWriteKind requested)
@@ -766,11 +755,11 @@ namespace LimbusCanvasFix
             screenGetHeight = FindOptionalMethod(screenClass, deviceScreenClass, "get_height", 0);
 
             initialized = true;
-            Plugin.Log.LogInfo("Layout maintainer resolved Unity RectTransform APIs.");
+            CanvasFixHost.Log.LogInfo("Layout maintainer resolved Unity RectTransform APIs.");
             if (screenGetWidth != IntPtr.Zero && screenGetHeight != IntPtr.Zero)
-                Plugin.Log.LogInfo($"Layout maintainer will scale horizontal rules from {DesignScreenWidth:0}x{DesignScreenHeight:0} design aspect.");
+                CanvasFixHost.Log.LogInfo($"Layout maintainer will scale horizontal rules from {DesignScreenWidth:0}x{DesignScreenHeight:0} design aspect.");
             else
-                Plugin.Log.LogWarning("Layout maintainer could not resolve Unity Screen width/height APIs; horizontal rules will use design values.");
+                CanvasFixHost.Log.LogWarning("Layout maintainer could not resolve Unity Screen width/height APIs; horizontal rules will use design values.");
         }
 
         private static string BuildPath(IntPtr transform)
@@ -814,7 +803,7 @@ namespace LimbusCanvasFix
             {
                 lastLoggedScaleWidth = width;
                 lastLoggedScaleHeight = height;
-                Plugin.Log.LogInfo($"Layout maintainer horizontal scale={scale:0.###} for screen {width}x{height}.");
+                CanvasFixHost.Log.LogInfo($"Layout maintainer horizontal scale={scale:0.###} for screen {width}x{height}.");
             }
 
             return scale;
@@ -879,7 +868,7 @@ namespace LimbusCanvasFix
         {
             var count = ++failureCount;
             if (count <= 12 || count % 500 == 0)
-                Plugin.Log.LogDebug($"Layout maintainer {phase} failure #{count}: {ex.GetType().Name}: {ex.Message}");
+                CanvasFixHost.Log.LogDebug($"Layout maintainer {phase} failure #{count}: {ex.GetType().Name}: {ex.Message}");
         }
     }
 

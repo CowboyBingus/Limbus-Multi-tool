@@ -1,15 +1,16 @@
 using LimbusShared;
 using System;
 using System.Diagnostics;
+using LimbusRuntimeUIInspector.Contracts;
 
-namespace LimbusRuntimeUIInspector;
+namespace LimbusRuntimeUIInspector.Unity;
 
 internal static partial class UnityUiRuntime
 {
     public static UiElement ApplyEdit(EditRequest edit, IntPtr transform)
     {
         var stopwatch = Stopwatch.StartNew();
-        Plugin.Log.LogInfo($"Inspector edit: apply begin for id={edit.Id}.");
+        InspectorHost.Log.LogInfo($"Inspector edit: apply begin for id={edit.Id}.");
         EnsureInitialized();
 
         var gameObject = ValidateEditTarget(edit, transform);
@@ -23,7 +24,7 @@ internal static partial class UnityUiRuntime
         ApplyScaleEdit(edit, transform);
 
         var updated = ReadUpdatedElement(transform, gameObject, isRectTransform);
-        Plugin.Log.LogInfo($"Inspector edit: applied id={edit.Id} in {stopwatch.ElapsedMilliseconds}ms.");
+        InspectorHost.Log.LogInfo($"Inspector edit: applied id={edit.Id} in {stopwatch.ElapsedMilliseconds}ms.");
         return updated;
     }
 

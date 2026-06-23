@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
-namespace LimbusRuntimeUIInspector;
+namespace LimbusRuntimeUIInspector.Contracts;
 
 internal sealed record ScannedUiElement(UiElement Element, IntPtr RectTransform);
 

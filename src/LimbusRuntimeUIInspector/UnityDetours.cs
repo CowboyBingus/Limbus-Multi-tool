@@ -3,9 +3,10 @@ using LimbusShared;
 using MonoMod.RuntimeDetour;
 using System;
 using System.Runtime.InteropServices;
+using LimbusRuntimeUIInspector.Jobs;
 using static LimbusShared.NativeInterop;
 
-namespace LimbusRuntimeUIInspector;
+namespace LimbusRuntimeUIInspector.Unity;
 
 internal static class UnityPumpDetour
 {
@@ -24,37 +25,37 @@ internal static class UnityPumpDetour
 
         try
         {
-            Plugin.Debug("Installing on-demand Canvas.SendWillRenderCanvases pump.");
+            InspectorHost.Debug("Installing on-demand Canvas.SendWillRenderCanvases pump.");
             var canvasClass = IL2CPP.GetIl2CppClass("UnityEngine.UIModule.dll", UnityInteropNames.Namespace, "Canvas");
             if (canvasClass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Runtime UI inspector pump install failed: UnityEngine.Canvas class was not resolved.");
+                InspectorHost.Log.LogWarning("Runtime UI inspector pump install failed: UnityEngine.Canvas class was not resolved.");
                 return false;
             }
 
             var method = IL2CPP.il2cpp_class_get_method_from_name(canvasClass, "SendWillRenderCanvases", 0);
             if (method == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Runtime UI inspector pump install failed: Canvas.SendWillRenderCanvases was not resolved.");
+                InspectorHost.Log.LogWarning("Runtime UI inspector pump install failed: Canvas.SendWillRenderCanvases was not resolved.");
                 return false;
             }
 
             var methodPointer = Marshal.ReadIntPtr(method);
             if (methodPointer == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Runtime UI inspector pump install failed: Canvas.SendWillRenderCanvases pointer was null.");
+                InspectorHost.Log.LogWarning("Runtime UI inspector pump install failed: Canvas.SendWillRenderCanvases pointer was null.");
                 return false;
             }
 
             detour = new NativeDetour(methodPointer, replacement);
             original = detour.GenerateTrampoline<StaticVoidDelegate>();
             detour.Apply();
-            Plugin.Log.LogInfo($"Runtime UI inspector on-demand pump installed at {Ptr(methodPointer)}.");
+            InspectorHost.Log.LogInfo($"Runtime UI inspector on-demand pump installed at {Ptr(methodPointer)}.");
             return true;
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"Runtime UI inspector pump install failed: {ex}");
+            InspectorHost.Log.LogWarning($"Runtime UI inspector pump install failed: {ex}");
             return false;
         }
     }
@@ -102,37 +103,37 @@ internal static class CanvasRootObserveDetour
 
         try
         {
-            Plugin.Debug("Installing CanvasScaler.OnEnable root observer.");
+            InspectorHost.Debug("Installing CanvasScaler.OnEnable root observer.");
             var scalerClass = IL2CPP.GetIl2CppClass("UnityEngine.UI.dll", "UnityEngine.UI", "CanvasScaler");
             if (scalerClass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Canvas root observer install failed: UnityEngine.UI.CanvasScaler class was not resolved.");
+                InspectorHost.Log.LogWarning("Canvas root observer install failed: UnityEngine.UI.CanvasScaler class was not resolved.");
                 return false;
             }
 
             var method = IL2CPP.il2cpp_class_get_method_from_name(scalerClass, "OnEnable", 0);
             if (method == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Canvas root observer install failed: CanvasScaler.OnEnable was not resolved.");
+                InspectorHost.Log.LogWarning("Canvas root observer install failed: CanvasScaler.OnEnable was not resolved.");
                 return false;
             }
 
             var methodPointer = Marshal.ReadIntPtr(method);
             if (methodPointer == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Canvas root observer install failed: method pointer was null.");
+                InspectorHost.Log.LogWarning("Canvas root observer install failed: method pointer was null.");
                 return false;
             }
 
             detour = new NativeDetour(methodPointer, replacement);
             original = detour.GenerateTrampoline<OnEnableDelegate>();
             detour.Apply();
-            Plugin.Log.LogInfo($"Canvas root observer installed at {Ptr(methodPointer)}.");
+            InspectorHost.Log.LogInfo($"Canvas root observer installed at {Ptr(methodPointer)}.");
             return true;
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"Canvas root observer install failed: {ex}");
+            InspectorHost.Log.LogWarning($"Canvas root observer install failed: {ex}");
             return false;
         }
     }
@@ -166,37 +167,37 @@ internal static class RectTransformRootObserveDetour
 
         try
         {
-            Plugin.Debug("Installing RectTransform relayout root observer.");
+            InspectorHost.Debug("Installing RectTransform relayout root observer.");
             var rectClass = IL2CPP.GetIl2CppClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "RectTransform");
             if (rectClass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("RectTransform root observer install failed: RectTransform class was not resolved.");
+                InspectorHost.Log.LogWarning("RectTransform root observer install failed: RectTransform class was not resolved.");
                 return false;
             }
 
             var method = IL2CPP.il2cpp_class_get_method_from_name(rectClass, "SendReapplyDrivenProperties", 1);
             if (method == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("RectTransform root observer install failed: SendReapplyDrivenProperties was not resolved.");
+                InspectorHost.Log.LogWarning("RectTransform root observer install failed: SendReapplyDrivenProperties was not resolved.");
                 return false;
             }
 
             var methodPointer = Marshal.ReadIntPtr(method);
             if (methodPointer == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("RectTransform root observer install failed: method pointer was null.");
+                InspectorHost.Log.LogWarning("RectTransform root observer install failed: method pointer was null.");
                 return false;
             }
 
             detour = new NativeDetour(methodPointer, replacement);
             original = detour.GenerateTrampoline<SendReapplyDrivenPropertiesDelegate>();
             detour.Apply();
-            Plugin.Log.LogInfo($"RectTransform relayout root observer installed at {Ptr(methodPointer)}.");
+            InspectorHost.Log.LogInfo($"RectTransform relayout root observer installed at {Ptr(methodPointer)}.");
             return true;
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"RectTransform root observer install failed: {ex}");
+            InspectorHost.Log.LogWarning($"RectTransform root observer install failed: {ex}");
             return false;
         }
     }
@@ -230,37 +231,37 @@ internal static class GameObjectRootObserveDetour
 
         try
         {
-            Plugin.Debug("Installing GameObject.SetActive root observer.");
+            InspectorHost.Debug("Installing GameObject.SetActive root observer.");
             var gameObjectClass = IL2CPP.GetIl2CppClass(UnityInteropNames.CoreModule, UnityInteropNames.Namespace, "GameObject");
             if (gameObjectClass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("GameObject root observer install failed: GameObject class was not resolved.");
+                InspectorHost.Log.LogWarning("GameObject root observer install failed: GameObject class was not resolved.");
                 return false;
             }
 
             var method = IL2CPP.il2cpp_class_get_method_from_name(gameObjectClass, "SetActive", 1);
             if (method == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("GameObject root observer install failed: GameObject.SetActive was not resolved.");
+                InspectorHost.Log.LogWarning("GameObject root observer install failed: GameObject.SetActive was not resolved.");
                 return false;
             }
 
             var methodPointer = Marshal.ReadIntPtr(method);
             if (methodPointer == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("GameObject root observer install failed: method pointer was null.");
+                InspectorHost.Log.LogWarning("GameObject root observer install failed: method pointer was null.");
                 return false;
             }
 
             detour = new NativeDetour(methodPointer, replacement);
             original = detour.GenerateTrampoline<SetActiveDelegate>();
             detour.Apply();
-            Plugin.Log.LogInfo($"GameObject.SetActive root observer installed at {Ptr(methodPointer)}.");
+            InspectorHost.Log.LogInfo($"GameObject.SetActive root observer installed at {Ptr(methodPointer)}.");
             return true;
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"GameObject root observer install failed: {ex}");
+            InspectorHost.Log.LogWarning($"GameObject root observer install failed: {ex}");
             return false;
         }
     }

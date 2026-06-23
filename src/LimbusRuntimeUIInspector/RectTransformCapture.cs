@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using LimbusRuntimeUIInspector.Contracts;
 
-namespace LimbusRuntimeUIInspector;
+namespace LimbusRuntimeUIInspector.Unity;
 
 internal static class RectTransformCapture
 {
@@ -29,7 +30,7 @@ internal static class RectTransformCapture
             Volatile.Write(ref cachedCount, knownRects.Count);
         }
 
-        Plugin.Debug($"Inspector edit cache refreshed from live scan: cached={CachedCount}.");
+        InspectorHost.Debug($"Inspector edit cache refreshed from live scan: cached={CachedCount}.");
     }
 
     public static bool TryGetRect(int id, out IntPtr rect)

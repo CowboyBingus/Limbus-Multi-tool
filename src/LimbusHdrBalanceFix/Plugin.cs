@@ -1,6 +1,5 @@
 using BepInEx;
 using BepInEx.Configuration;
-using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using Il2CppInterop.Runtime;
 using LimbusShared;
@@ -20,7 +19,6 @@ public sealed class Plugin : BasePlugin
     public const string VERSION = "0.3.0";
     private const string BloomSection = "URP Bloom";
 
-    private static ManualLogSource? log;
     private static ConfigEntry<bool>? enabled;
     private static ConfigEntry<float>? reapplyIntervalSeconds;
     private static ConfigEntry<bool>? applyHdrOutputSettings;
@@ -36,35 +34,49 @@ public sealed class Plugin : BasePlugin
     private static ConfigEntry<bool>? forceParameterOverrides;
     private static ConfigEntry<bool>? debugLogging;
 
-    internal static new ManualLogSource Log => log ?? throw new InvalidOperationException($"{NAME} logging is not initialized.");
-    internal static ConfigEntry<bool> Enabled => Required(enabled, nameof(Enabled));
-    internal static ConfigEntry<float> ReapplyIntervalSeconds => Required(reapplyIntervalSeconds, nameof(ReapplyIntervalSeconds));
-    internal static ConfigEntry<bool> ApplyHdrOutputSettings => Required(applyHdrOutputSettings, nameof(ApplyHdrOutputSettings));
-    internal static ConfigEntry<bool> DisableAutomaticHdrTonemapping => Required(disableAutomaticHdrTonemapping, nameof(DisableAutomaticHdrTonemapping));
-    internal static ConfigEntry<float> PaperWhiteNits => Required(paperWhiteNits, nameof(PaperWhiteNits));
-    internal static ConfigEntry<bool> ClampBloom => Required(clampBloom, nameof(ClampBloom));
-    internal static ConfigEntry<float> BloomThresholdMin => Required(bloomThresholdMin, nameof(BloomThresholdMin));
-    internal static ConfigEntry<float> BloomIntensityMax => Required(bloomIntensityMax, nameof(BloomIntensityMax));
-    internal static ConfigEntry<float> BloomScatterMax => Required(bloomScatterMax, nameof(BloomScatterMax));
-    internal static ConfigEntry<bool> ClampColorAdjustments => Required(clampColorAdjustments, nameof(ClampColorAdjustments));
-    internal static ConfigEntry<float> PostExposureMaxEv => Required(postExposureMaxEv, nameof(PostExposureMaxEv));
-    internal static ConfigEntry<int> TonemappingMode => Required(tonemappingMode, nameof(TonemappingMode));
-    internal static ConfigEntry<bool> ForceParameterOverrides => Required(forceParameterOverrides, nameof(ForceParameterOverrides));
-    internal static ConfigEntry<bool> DebugLogging => Required(debugLogging, nameof(DebugLogging));
+    private static ConfigEntry<bool> Enabled => Required(enabled, nameof(Enabled));
+    private static ConfigEntry<float> ReapplyIntervalSeconds => Required(reapplyIntervalSeconds, nameof(ReapplyIntervalSeconds));
+    private static ConfigEntry<bool> ApplyHdrOutputSettings => Required(applyHdrOutputSettings, nameof(ApplyHdrOutputSettings));
+    private static ConfigEntry<bool> DisableAutomaticHdrTonemapping => Required(disableAutomaticHdrTonemapping, nameof(DisableAutomaticHdrTonemapping));
+    private static ConfigEntry<float> PaperWhiteNits => Required(paperWhiteNits, nameof(PaperWhiteNits));
+    private static ConfigEntry<bool> ClampBloom => Required(clampBloom, nameof(ClampBloom));
+    private static ConfigEntry<float> BloomThresholdMin => Required(bloomThresholdMin, nameof(BloomThresholdMin));
+    private static ConfigEntry<float> BloomIntensityMax => Required(bloomIntensityMax, nameof(BloomIntensityMax));
+    private static ConfigEntry<float> BloomScatterMax => Required(bloomScatterMax, nameof(BloomScatterMax));
+    private static ConfigEntry<bool> ClampColorAdjustments => Required(clampColorAdjustments, nameof(ClampColorAdjustments));
+    private static ConfigEntry<float> PostExposureMaxEv => Required(postExposureMaxEv, nameof(PostExposureMaxEv));
+    private static ConfigEntry<int> TonemappingMode => Required(tonemappingMode, nameof(TonemappingMode));
+    private static ConfigEntry<bool> ForceParameterOverrides => Required(forceParameterOverrides, nameof(ForceParameterOverrides));
+    private static ConfigEntry<bool> DebugLogging => Required(debugLogging, nameof(DebugLogging));
 
     public override void Load()
     {
-        InitializeLog(base.Log);
         BindConfig(Config);
+        HdrBalanceHost.Initialize(
+            base.Log,
+            Enabled,
+            ReapplyIntervalSeconds,
+            ApplyHdrOutputSettings,
+            DisableAutomaticHdrTonemapping,
+            PaperWhiteNits,
+            ClampBloom,
+            BloomThresholdMin,
+            BloomIntensityMax,
+            BloomScatterMax,
+            ClampColorAdjustments,
+            PostExposureMaxEv,
+            TonemappingMode,
+            ForceParameterOverrides,
+            DebugLogging);
 
-        Log.LogInfo($"{NAME} {VERSION} loading...");
+        HdrBalanceHost.Log.LogInfo($"{NAME} {VERSION} loading...");
 
-        HdrOutputSettingsPatcher.Apply("Plugin.Load", forceLog: true);
+        HdrOutputSettingsPatcher.Apply("Load", forceLog: true);
         VolumeOnEnableDetour.Install();
         VolumeProfileOnEnableDetour.Install();
         CanvasRenderPumpDetour.Install();
 
-        Log.LogInfo(
+        HdrBalanceHost.Log.LogInfo(
             $"{NAME} {VERSION} loaded. Enabled={Enabled.Value}, PaperWhiteNits={PaperWhiteNits.Value:0.#}, " +
             $"ClampBloom={ClampBloom.Value}, BloomThresholdMin={BloomThresholdMin.Value:0.###}, " +
             $"BloomIntensityMax={BloomIntensityMax.Value:0.###}, BloomScatterMax={BloomScatterMax.Value:0.###}, " +
@@ -79,11 +91,6 @@ public sealed class Plugin : BasePlugin
         VolumeOnEnableDetour.Uninstall();
         VolumeProfilePatcher.Reset();
         return true;
-    }
-
-    private static void InitializeLog(ManualLogSource source)
-    {
-        log = source;
     }
 
     private static void BindConfig(ConfigFile config)
@@ -104,17 +111,7 @@ public sealed class Plugin : BasePlugin
         debugLogging = config.Bind("Diagnostics", "DebugLogging", false, "Writes additional field/method resolution and patch diagnostics.");
     }
 
-    internal static bool IsEnabled => IsSet(enabled);
-
-    internal static void Debug(string message)
-    {
-        if (IsSet(debugLogging))
-            Log.LogInfo($"[debug] {message}");
-    }
-
     private static ConfigEntry<T> Required<T>(ConfigEntry<T>? entry, string name) => PluginConfig.Required(entry, NAME, name);
-
-    private static bool IsSet(ConfigEntry<bool>? entry) => PluginConfig.IsSet(entry);
 }
 
 internal static class CanvasRenderPumpDetour
@@ -138,32 +135,32 @@ internal static class CanvasRenderPumpDetour
             var canvasClass = IL2CPP.GetIl2CppClass("UnityEngine.UIModule.dll", "UnityEngine", "Canvas");
             if (canvasClass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("HDR balance pump skipped: UnityEngine.Canvas class was not resolved.");
+                HdrBalanceHost.Log.LogWarning("HDR balance pump skipped: UnityEngine.Canvas class was not resolved.");
                 return;
             }
 
             var method = IL2CPP.il2cpp_class_get_method_from_name(canvasClass, "SendWillRenderCanvases", 0);
             if (method == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("HDR balance pump skipped: Canvas.SendWillRenderCanvases was not resolved.");
+                HdrBalanceHost.Log.LogWarning("HDR balance pump skipped: Canvas.SendWillRenderCanvases was not resolved.");
                 return;
             }
 
             var methodPointer = Marshal.ReadIntPtr(method);
             if (methodPointer == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("HDR balance pump skipped: method pointer was null.");
+                HdrBalanceHost.Log.LogWarning("HDR balance pump skipped: method pointer was null.");
                 return;
             }
 
             detour = new NativeDetour(methodPointer, replacement);
             original = detour.GenerateTrampoline<StaticVoidDelegate>();
             detour.Apply();
-            Plugin.Log.LogInfo($"HDR balance pump installed at {Ptr(methodPointer)}.");
+            HdrBalanceHost.Log.LogInfo($"HDR balance pump installed at {Ptr(methodPointer)}.");
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"HDR balance pump install failed: {ex.GetType().Name}: {ex.Message}");
+            HdrBalanceHost.Log.LogWarning($"HDR balance pump install failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -194,10 +191,10 @@ internal static class CanvasRenderPumpDetour
 
     private static void ApplyThrottled()
     {
-        if (!Plugin.IsEnabled)
+        if (!HdrBalanceHost.IsEnabled)
             return;
 
-        var interval = Math.Max(0.05f, Plugin.ReapplyIntervalSeconds.Value);
+        var interval = Math.Max(0.05f, HdrBalanceHost.ReapplyIntervalSeconds.Value);
         var now = DateTime.UtcNow;
         if (now < nextApplyUtc)
             return;
@@ -228,32 +225,32 @@ internal static class VolumeOnEnableDetour
             var volumeClass = IL2CPP.GetIl2CppClass("Unity.RenderPipelines.Core.Runtime.dll", "UnityEngine.Rendering", "Volume");
             if (volumeClass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Volume.OnEnable HDR balance detour skipped: class was not resolved.");
+                HdrBalanceHost.Log.LogWarning("Volume.OnEnable HDR balance detour skipped: class was not resolved.");
                 return;
             }
 
             var method = IL2CPP.il2cpp_class_get_method_from_name(volumeClass, "OnEnable", 0);
             if (method == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Volume.OnEnable HDR balance detour skipped: method was not resolved.");
+                HdrBalanceHost.Log.LogWarning("Volume.OnEnable HDR balance detour skipped: method was not resolved.");
                 return;
             }
 
             var methodPointer = Marshal.ReadIntPtr(method);
             if (methodPointer == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("Volume.OnEnable HDR balance detour skipped: method pointer was null.");
+                HdrBalanceHost.Log.LogWarning("Volume.OnEnable HDR balance detour skipped: method pointer was null.");
                 return;
             }
 
             detour = new NativeDetour(methodPointer, replacement);
             original = detour.GenerateTrampoline<InstanceVoidDelegate>();
             detour.Apply();
-            Plugin.Log.LogInfo($"Volume.OnEnable HDR balance detour installed at {Ptr(methodPointer)}.");
+            HdrBalanceHost.Log.LogInfo($"Volume.OnEnable HDR balance detour installed at {Ptr(methodPointer)}.");
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"Volume.OnEnable HDR balance detour install failed: {ex.GetType().Name}: {ex.Message}");
+            HdrBalanceHost.Log.LogWarning($"Volume.OnEnable HDR balance detour install failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -289,32 +286,32 @@ internal static class VolumeProfileOnEnableDetour
             var profileClass = IL2CPP.GetIl2CppClass("Unity.RenderPipelines.Core.Runtime.dll", "UnityEngine.Rendering", "VolumeProfile");
             if (profileClass == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("VolumeProfile.OnEnable HDR balance detour skipped: class was not resolved.");
+                HdrBalanceHost.Log.LogWarning("VolumeProfile.OnEnable HDR balance detour skipped: class was not resolved.");
                 return;
             }
 
             var method = IL2CPP.il2cpp_class_get_method_from_name(profileClass, "OnEnable", 0);
             if (method == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("VolumeProfile.OnEnable HDR balance detour skipped: method was not resolved.");
+                HdrBalanceHost.Log.LogWarning("VolumeProfile.OnEnable HDR balance detour skipped: method was not resolved.");
                 return;
             }
 
             var methodPointer = Marshal.ReadIntPtr(method);
             if (methodPointer == IntPtr.Zero)
             {
-                Plugin.Log.LogWarning("VolumeProfile.OnEnable HDR balance detour skipped: method pointer was null.");
+                HdrBalanceHost.Log.LogWarning("VolumeProfile.OnEnable HDR balance detour skipped: method pointer was null.");
                 return;
             }
 
             detour = new NativeDetour(methodPointer, replacement);
             original = detour.GenerateTrampoline<InstanceVoidDelegate>();
             detour.Apply();
-            Plugin.Log.LogInfo($"VolumeProfile.OnEnable HDR balance detour installed at {Ptr(methodPointer)}.");
+            HdrBalanceHost.Log.LogInfo($"VolumeProfile.OnEnable HDR balance detour installed at {Ptr(methodPointer)}.");
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"VolumeProfile.OnEnable HDR balance detour install failed: {ex.GetType().Name}: {ex.Message}");
+            HdrBalanceHost.Log.LogWarning($"VolumeProfile.OnEnable HDR balance detour install failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -366,7 +363,7 @@ internal static class HdrOutputSettingsPatcher
 
     public static void Apply(string reason, bool forceLog)
     {
-        if (!Plugin.IsEnabled || !Plugin.ApplyHdrOutputSettings.Value)
+        if (!HdrBalanceHost.IsEnabled || !HdrBalanceHost.ApplyHdrOutputSettings.Value)
             return;
 
         try
@@ -422,7 +419,7 @@ internal static class HdrOutputSettingsPatcher
 
     private static void ApplyAutomaticTonemappingSetting(HdrOutputState state)
     {
-        if (!Plugin.DisableAutomaticHdrTonemapping.Value)
+        if (!HdrBalanceHost.DisableAutomaticHdrTonemapping.Value)
             return;
 
         if (state.Automatic == false)
@@ -440,7 +437,7 @@ internal static class HdrOutputSettingsPatcher
 
     private static void ApplyPaperWhiteSetting(HdrOutputState state)
     {
-        var paperWhite = Math.Clamp(Plugin.PaperWhiteNits.Value, 80f, 500f);
+        var paperWhite = Math.Clamp(HdrBalanceHost.PaperWhiteNits.Value, 80f, 500f);
         if (setPaperWhiteNits == null)
         {
             state.Changes.Add("paperWhiteNits skipped: SetPaperWhiteNits icall missing");
@@ -468,7 +465,7 @@ internal static class HdrOutputSettingsPatcher
         if (!forceLog && nextCount > 6 && (state.Changes.Count == 0 || nextCount > 20) && nextCount % 120 != 0)
             return;
 
-        Plugin.Log.LogInfo(
+        HdrBalanceHost.Log.LogInfo(
             $"HDR output apply #{nextCount} ({reason}): " +
             $"available={FormatBool(state.Available)}, active={FormatBool(state.Active)}, automatic={FormatBool(state.Automatic)}, " +
             $"paperWhite={FormatFloat(state.PaperWhiteBefore)}, toneMap={FormatInt(state.MinTone)}-{FormatInt(state.MaxTone)}/full={FormatInt(state.MaxFullFrameTone)}, " +
@@ -504,7 +501,7 @@ internal static class HdrOutputSettingsPatcher
         getMaxFullFrameToneMapLuminance = ResolveNative<GetIntIntDelegate>("UnityEngine.HDROutputSettings::GetMaxFullFrameToneMapLuminance", statuses);
 
         initialized = true;
-        Plugin.Log.LogInfo("Resolved Unity HDR output icalls: " + string.Join(", ", statuses) + ".");
+        HdrBalanceHost.Log.LogInfo("Resolved Unity HDR output icalls: " + string.Join(", ", statuses) + ".");
     }
 
     private static T? ResolveNative<T>(string name, List<string> statuses) where T : Delegate
@@ -596,9 +593,9 @@ internal static class HdrOutputSettingsPatcher
     {
         var count = ++failureCount;
         if (count <= 6)
-            Plugin.Log.LogWarning($"{phase} failure #{count}: {ex.GetType().Name}: {ex.Message}");
+            HdrBalanceHost.Log.LogWarning($"{phase} failure #{count}: {ex.GetType().Name}: {ex.Message}");
         else if (count % 200 == 0)
-            Plugin.Log.LogDebug($"{phase} failure #{count}: {ex.GetType().Name}: {ex.Message}");
+            HdrBalanceHost.Log.LogDebug($"{phase} failure #{count}: {ex.GetType().Name}: {ex.Message}");
     }
 
     private static string FormatBool(bool? value) => value.HasValue ? value.Value.ToString() : "unknown";
@@ -633,7 +630,7 @@ internal static class VolumeProfilePatcher
 
     public static void ApplyToVolume(IntPtr volume, string reason)
     {
-        if (!Plugin.IsEnabled || volume == IntPtr.Zero)
+        if (!HdrBalanceHost.IsEnabled || volume == IntPtr.Zero)
             return;
 
         try
@@ -652,7 +649,7 @@ internal static class VolumeProfilePatcher
 
     private static void ApplyToProfile(IntPtr profile, string reason, bool remember)
     {
-        if (!Plugin.IsEnabled || profile == IntPtr.Zero)
+        if (!HdrBalanceHost.IsEnabled || profile == IntPtr.Zero)
             return;
 
         try
@@ -664,7 +661,7 @@ internal static class VolumeProfilePatcher
             var components = IL2CPP.il2cpp_field_get_value_object(profileComponentsField, profile);
             if (components == IntPtr.Zero)
             {
-                Plugin.Debug($"Volume profile has no component list: {DescribeObject(profile)}");
+                HdrBalanceHost.Debug($"Volume profile has no component list: {DescribeObject(profile)}");
                 return;
             }
 
@@ -684,7 +681,7 @@ internal static class VolumeProfilePatcher
                 var count = ++profileApplyCount;
                 if (count <= 20 || count % 200 == 0)
                 {
-                    Plugin.Log.LogInfo(
+                    HdrBalanceHost.Log.LogInfo(
                         $"HDR volume profile patched #{count} ({reason}): components={visited}, changes={changed}, knownProfiles={knownProfileHandles.Count}.");
                 }
             }
@@ -697,7 +694,7 @@ internal static class VolumeProfilePatcher
 
     public static void ReapplyKnownProfiles(string reason)
     {
-        if (!Plugin.IsEnabled || knownProfileHandles.Count == 0)
+        if (!HdrBalanceHost.IsEnabled || knownProfileHandles.Count == 0)
             return;
 
         for (var i = knownProfileHandles.Count - 1; i >= 0; i--)
@@ -781,7 +778,7 @@ internal static class VolumeProfilePatcher
             throw new MissingFieldException("VolumeProfile.components field was not resolved.");
 
         initialized = true;
-        Plugin.Log.LogInfo("Resolved URP/Core volume profile APIs for HDR balance.");
+        HdrBalanceHost.Log.LogInfo("Resolved URP/Core volume profile APIs for HDR balance.");
     }
 
     private static IntPtr GetProfileFromVolume(IntPtr volume)
@@ -817,32 +814,32 @@ internal static class VolumeProfilePatcher
 
     private static int ApplyBloom(IntPtr component, string reason)
     {
-        if (!Plugin.ClampBloom.Value)
+        if (!HdrBalanceHost.ClampBloom.Value)
             return 0;
 
         var changed = 0;
-        changed += PatchFloatParameter(component, "threshold", current => Math.Max(current, Plugin.BloomThresholdMin.Value), "Bloom.threshold", reason);
-        changed += PatchFloatParameter(component, "intensity", current => Math.Min(current, Math.Max(0f, Plugin.BloomIntensityMax.Value)), "Bloom.intensity", reason);
-        changed += PatchFloatParameter(component, "scatter", current => Math.Min(current, Math.Clamp(Plugin.BloomScatterMax.Value, 0f, 1f)), "Bloom.scatter", reason);
+        changed += PatchFloatParameter(component, "threshold", current => Math.Max(current, HdrBalanceHost.BloomThresholdMin.Value), "Bloom.threshold", reason);
+        changed += PatchFloatParameter(component, "intensity", current => Math.Min(current, Math.Max(0f, HdrBalanceHost.BloomIntensityMax.Value)), "Bloom.intensity", reason);
+        changed += PatchFloatParameter(component, "scatter", current => Math.Min(current, Math.Clamp(HdrBalanceHost.BloomScatterMax.Value, 0f, 1f)), "Bloom.scatter", reason);
         return changed;
     }
 
     private static int ApplyColorAdjustments(IntPtr component, string reason)
     {
-        if (!Plugin.ClampColorAdjustments.Value)
+        if (!HdrBalanceHost.ClampColorAdjustments.Value)
             return 0;
 
         return PatchFloatParameter(
             component,
             "postExposure",
-            current => Math.Min(current, Plugin.PostExposureMaxEv.Value),
+            current => Math.Min(current, HdrBalanceHost.PostExposureMaxEv.Value),
             "ColorAdjustments.postExposure",
             reason);
     }
 
     private static int ApplyTonemapping(IntPtr component, string reason)
     {
-        var mode = Plugin.TonemappingMode.Value;
+        var mode = HdrBalanceHost.TonemappingMode.Value;
         if (mode < 0)
             return 0;
 
@@ -854,7 +851,7 @@ internal static class VolumeProfilePatcher
         var parameter = GetObjectField(component, fieldName);
         if (parameter == IntPtr.Zero)
         {
-            Plugin.Debug($"{label} skipped: parameter field not found on {DescribeObject(component)}.");
+            HdrBalanceHost.Debug($"{label} skipped: parameter field not found on {DescribeObject(component)}.");
             return 0;
         }
 
@@ -878,7 +875,7 @@ internal static class VolumeProfilePatcher
         var parameter = GetObjectField(component, fieldName);
         if (parameter == IntPtr.Zero)
         {
-            Plugin.Debug($"{label} skipped: parameter field not found on {DescribeObject(component)}.");
+            HdrBalanceHost.Debug($"{label} skipped: parameter field not found on {DescribeObject(component)}.");
             return 0;
         }
 
@@ -966,7 +963,7 @@ internal static class VolumeProfilePatcher
 
     private static void ForceOverride(IntPtr parameter)
     {
-        if (!Plugin.ForceParameterOverrides.Value || parameter == IntPtr.Zero)
+        if (!HdrBalanceHost.ForceParameterOverrides.Value || parameter == IntPtr.Zero)
             return;
 
         try
@@ -994,7 +991,7 @@ internal static class VolumeProfilePatcher
         var itemMethod = IL2CPP.il2cpp_class_get_method_from_name(klass, "get_Item", 1);
         if (countMethod == IntPtr.Zero || itemMethod == IntPtr.Zero)
         {
-            Plugin.Debug($"Could not enumerate component list: count={Ptr(countMethod)}, item={Ptr(itemMethod)}, list={DescribeObject(list)}.");
+            HdrBalanceHost.Debug($"Could not enumerate component list: count={Ptr(countMethod)}, item={Ptr(itemMethod)}, list={DescribeObject(list)}.");
             yield break;
         }
 
@@ -1069,21 +1066,21 @@ internal static class VolumeProfilePatcher
     {
         var count = ++parameterChangeLogCount;
         if (count <= 32 || count % 500 == 0)
-            Plugin.Log.LogInfo($"HDR balance {label}: {before:0.###}->{after:0.###} ({reason}).");
+            HdrBalanceHost.Log.LogInfo($"HDR balance {label}: {before:0.###}->{after:0.###} ({reason}).");
     }
 
     private static void LogParameterChange(string label, int before, int after, string reason)
     {
         var count = ++parameterChangeLogCount;
         if (count <= 32 || count % 500 == 0)
-            Plugin.Log.LogInfo($"HDR balance {label}: {before}->{after} ({reason}).");
+            HdrBalanceHost.Log.LogInfo($"HDR balance {label}: {before}->{after} ({reason}).");
     }
 
     private static void ReportFailure(string phase, Exception ex)
     {
         var count = ++failureCount;
         if (count <= 12 || count % 500 == 0)
-            Plugin.Log.LogDebug($"HDR volume {phase} failure #{count}: {ex.GetType().Name}: {ex.Message}");
+            HdrBalanceHost.Log.LogDebug($"HDR volume {phase} failure #{count}: {ex.GetType().Name}: {ex.Message}");
     }
 
 }

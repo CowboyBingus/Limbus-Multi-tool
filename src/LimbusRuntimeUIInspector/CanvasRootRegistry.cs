@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 
-namespace LimbusRuntimeUIInspector;
+namespace LimbusRuntimeUIInspector.Unity;
 
 internal static class CanvasRootRegistry
 {
@@ -38,7 +38,7 @@ internal static class CanvasRootRegistry
         {
             var failures = Interlocked.Increment(ref failureCount);
             if (failures <= 8)
-                Plugin.Debug($"Canvas root observe failed #{failures}: {ex.GetType().Name}: {ex.Message}");
+                InspectorHost.Debug($"Canvas root observe failed #{failures}: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -56,7 +56,7 @@ internal static class CanvasRootRegistry
         {
             var failures = Interlocked.Increment(ref failureCount);
             if (failures <= 8)
-                Plugin.Debug($"GameObject root observe failed #{failures}: {ex.GetType().Name}: {ex.Message}");
+                InspectorHost.Debug($"GameObject root observe failed #{failures}: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -83,13 +83,13 @@ internal static class CanvasRootRegistry
             }
 
             if (added || observed <= 8 || observed % 1000 == 0)
-                Plugin.Debug($"Hierarchy root observed from {source}: start=0x{transform.ToString("X")}, root=0x{root.ToString("X")}, added={added}, roots={rootCount}, observed={observed}.");
+                InspectorHost.Debug($"Hierarchy root observed from {source}: start=0x{transform.ToString("X")}, root=0x{root.ToString("X")}, added={added}, roots={rootCount}, observed={observed}.");
         }
         catch (Exception ex)
         {
             var failures = Interlocked.Increment(ref failureCount);
             if (failures <= 8)
-                Plugin.Debug($"Transform root observe failed #{failures} from {source}: {ex.GetType().Name}: {ex.Message}");
+                InspectorHost.Debug($"Transform root observe failed #{failures} from {source}: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -117,7 +117,7 @@ internal static class CanvasRootRegistry
             removed = rootsSeen.Remove(root);
 
         if (removed)
-            Plugin.Debug($"Forgot stale hierarchy root 0x{root.ToString("X")} ({reason}).");
+            InspectorHost.Debug($"Forgot stale hierarchy root 0x{root.ToString("X")} ({reason}).");
     }
 
     private static void PruneStaleLocked()
@@ -144,7 +144,7 @@ internal static class CanvasRootRegistry
             rootsSeen.Remove(root);
 
         if (stale.Count > 0)
-            Plugin.Debug($"Pruned {stale.Count} stale hierarchy roots older than observation sequence {cutoff}.");
+            InspectorHost.Debug($"Pruned {stale.Count} stale hierarchy roots older than observation sequence {cutoff}.");
     }
 
     private static void TrimLocked()
